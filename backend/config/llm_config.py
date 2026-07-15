@@ -26,30 +26,28 @@ class LLMConfig:
 
     MAX_RETRIES = 2  # MVP loop limit: 2 retry attempts maximum
 
-    def __init__(self) -> None:
-        self._groq_key = os.getenv("GROQ_API_KEY", "")
-        self._gemini_key = os.getenv("GEMINI_API_KEY", "")
-
     def get_provider(self, *, large_context: bool = False) -> LLMProvider:
         """Select provider: Gemini for large code files, Groq for fast logic."""
         return LLMProvider.GEMINI if large_context else LLMProvider.GROQ
 
     def _build_groq(self) -> ChatGroq:
-        if not self._groq_key:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
             raise ValueError("GROQ_API_KEY is not set")
         return ChatGroq(
-            model=self.GROQ_MODEL,
-            api_key=self._groq_key,
+            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            api_key=api_key,
             temperature=0,
             max_retries=self.MAX_RETRIES,
         )
 
     def _build_gemini(self) -> ChatGoogleGenerativeAI:
-        if not self._gemini_key:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
             raise ValueError("GEMINI_API_KEY is not set")
         return ChatGoogleGenerativeAI(
-            model=self.GEMINI_MODEL,
-            google_api_key=self._gemini_key,
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            google_api_key=api_key,
             temperature=0,
             max_retries=self.MAX_RETRIES,
         )

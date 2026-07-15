@@ -1,68 +1,115 @@
 # --- System / OS ---
 .DS_Store
 Thumbs.db
+desktop.ini
 *.swp
+*.swo
+
 
 # --- Environments / Secrets ---
 .env
-.env.example
 .env.local
 .env.*.local
+.env.*
+
+!.env.example
+!frontend/.env.example
+
 .venv/
 venv/
 env/
 ENV/
 
+
 # --- Python / Backend ---
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyd
+*.so
+
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+
 build/
 dist/
 *.egg-info/
 
+.coverage
+coverage.xml
+htmlcov/
+
+
 # --- Node / Frontend ---
 node_modules/
+
+/frontend/node_modules/
 /frontend/dist/
 /frontend/dist-ssr/
+/frontend/.vite/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.eslintcache
+pnpm-debug.log*
 
-# --- AI & Databases ---
-# We keep the folders but ignore the dynamic data
+.eslintcache
+*.tsbuildinfo
+
+
+# --- AI / Databases / Vector Memory ---
 data/
-logs/*.json
-logs/*.log
-*.db
-*.sqlite3
 .chroma/
+chroma/
 vector_storage/
 
-# --- Temporary / Local Agents ---
-/tests/temp_results/
-agent_traces/
+*.db
+*.sqlite
+*.sqlite3
 
+
+# --- Runtime Logs / Agent Traces ---
 logs/
-tests/
-
-# --- Manual / fixture test repos (local only, not project source) ---
-manual_test_repo/
-phase2_final_test/
-tests/fixtures/
-tests/output/
-**/fixture_repo/
-
-# --- Generated log & scan artifacts (explicit; logs/ above also applies) ---
-logs/scans/
-logs/traces/
-logs/**/*.json
-logs/**/*.jsonl
-logs/**/*.log
+agent_traces/
 phase1_errors.jsonl
 
-# --- Vector memory (ChromaDB local store) ---
-data/chroma/
+
+# --- Temporary Test Results ---
+/tests/temp_results/
+/tests/output/
+
+
+# --- Manual / Fixture Test Repositories ---
+manual_test_repo/
+phase2_final_test/
+phase3_autopsy_test/
+phase3_real_rce_test/
+phase3_regression_test/
+phase4_manual_test/
+
+tests/fixtures/
+**/fixture_repo/
+
+
+# --- Generated Files ---
+project_structure.txt
+
+
+# --- Temporary Files ---
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+
+
+# --- IDE / Editors ---
+.vscode/
+.idea/
+*.code-workspace
+
+
+# --- Windows / OneDrive ---
+~$*
+*.lnk
