@@ -115,6 +115,10 @@ def _save_scan_results(
     retry_count: int,
     memory_stored: bool,
     trace_file: str,
+    sbom_risks: list[dict[str, Any]] | None = None,
+    sbom_graph: list[dict[str, str]] | None = None,
+    sbom_assessment: str = "",
+    self_correction_triggered: bool = False,
 ) -> Path:
     scans_dir = Path(__file__).resolve().parents[1] / "logs" / "scans"
     scans_dir.mkdir(parents=True, exist_ok=True)
@@ -128,10 +132,28 @@ def _save_scan_results(
         "audit_status": audit_status,
         "retry_count": retry_count,
         "memory_stored": memory_stored,
+        "self_correction_triggered": self_correction_triggered,
         "trace_file": trace_file,
+        "sbom_risks": sbom_risks or [],
+        "sbom_graph": sbom_graph or [],
+        "sbom_assessment": sbom_assessment,
     }
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return out_path
+
+
+def _dependency_to_dict(dep: Any) -> dict[str, Any]:
+    return {
+        "name": dep.name,
+        "version": dep.version,
+        "source_file": dep.source_file,
+        "ecosystem": dep.ecosystem,
+        "direct": dep.direct,
+        "vulnerable": dep.vulnerable,
+        "transitive_of": dep.transitive_of,
+        "risk_level": dep.risk_level,
+        "notes": dep.notes,
+    }
 
 
 def run_mesh_scan(
@@ -139,14 +161,31 @@ def run_mesh_scan(
     llm_config: LLMConfig,
     *,
     seed_test_false_positive: bool = False,
+    scan_id: str | None = None,
+    status_store: Any | None = None,
 ) -> dict[str, Any]:
-    """Execute full agent mesh scan with Autopsy guardrails."""
+    """Execute full agent mesh scan with Autopsy guardrails and SBOM analysis."""
+    from core.log_cleanup import prune_logs
+    from core.repo_reader import RepositoryReader
+    from core.sbom import SBOMParser
+
     root = Path(repo_path).resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"Repository path does not exist: {repo_path}")
 
-    from core.repo_reader import RepositoryReader
+    scan_id = scan_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    trace_logger = TraceLogger(scan_id)
+    vector_memory = VectorMemory()
+    vector_memory.ensure_standard_practices()
 
+    def _status(msg: str, stage: str) -> None:
+        if status_store:
+            status_store.push(scan_id, msg, stage=stage)
+
+    if status_store:
+        status_store.create(scan_id, str(root))
+
+    _status("Scanning repository files...", "scanning")
     reader = RepositoryReader(root)
     files = reader.discover_files()
     chunks = reader.chunk_for_llm()
@@ -155,10 +194,11 @@ def run_mesh_scan(
         for c in chunks
     ]
 
-    scan_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    trace_logger = TraceLogger(scan_id)
-    vector_memory = VectorMemory()
-    vector_memory.ensure_standard_practices()
+    _status("Analyzing SBOM and dependency chain...", "sbom")
+    sbom = SBOMParser(root).analyze(llm_config)
+    sbom_risks = [_dependency_to_dict(d) for d in sbom.transitive_risks + [d for d in sbom.dependencies if d.vulnerable]]
+    if sbom_risks:
+        _status(f"Found {len(sbom_risks)} supply-chain risk(s) in SBOM.", "sbom")
 
     if not chunk_payloads:
         trace_logger.save()
@@ -171,8 +211,12 @@ def run_mesh_scan(
             retry_count=0,
             memory_stored=False,
             trace_file=str(trace_logger.path),
+            sbom_risks=sbom_risks,
+            sbom_graph=sbom.graph_edges,
+            sbom_assessment=sbom.groq_assessment,
         )
-        return {
+        prune_logs()
+        result = {
             "scan_id": scan_id,
             "repo_path": str(root),
             "files_scanned": 0,
@@ -184,8 +228,15 @@ def run_mesh_scan(
             "trace_file": str(trace_logger.path),
             "initial_findings": [],
             "self_correction_triggered": False,
+            "sbom_risks": sbom_risks,
+            "sbom_graph": sbom.graph_edges,
+            "sbom_assessment": sbom.groq_assessment,
         }
+        if status_store:
+            status_store.complete(scan_id, result)
+        return result
 
+    _status("Codebreaker analyzing source code...", "codebreaker")
     graph = build_agent_mesh()
     result = graph.invoke(
         {
@@ -209,6 +260,17 @@ def run_mesh_scan(
         }
     )
 
+    initial = result.get("initial_findings", [])
+    for f in initial:
+        if "rce" in f.get("vulnerability_type", "").lower() or "command" in f.get("vulnerability_type", "").lower():
+            _status(f"Found potential RCE in {f.get('file_path')}", "codebreaker")
+            break
+
+    if result.get("retry_count", 0) > 0 or result.get("self_correction_triggered"):
+        _status("Autopsy auditing findings...", "autopsy")
+        if result.get("self_correction_triggered"):
+            _status("Corrected: False Positive removed", "autopsy")
+
     findings = result.get("findings", [])
     scan_file = _save_scan_results(
         scan_id,
@@ -219,9 +281,14 @@ def run_mesh_scan(
         retry_count=result.get("retry_count", 0),
         memory_stored=result.get("memory_stored", False),
         trace_file=str(trace_logger.path),
+        sbom_risks=sbom_risks,
+        sbom_graph=sbom.graph_edges,
+        sbom_assessment=sbom.groq_assessment,
+        self_correction_triggered=result.get("self_correction_triggered", False),
     )
+    prune_logs()
 
-    return {
+    payload = {
         "scan_id": scan_id,
         "repo_path": str(root),
         "files_scanned": len(files),
@@ -232,7 +299,13 @@ def run_mesh_scan(
         "memory_stored": result.get("memory_stored", False),
         "memory_id": result.get("memory_id", ""),
         "trace_file": str(trace_logger.path),
-        "initial_findings": result.get("initial_findings", []),
+        "initial_findings": initial,
         "self_correction_triggered": result.get("self_correction_triggered", False),
         "audit_feedback": result.get("audit_feedback", ""),
+        "sbom_risks": sbom_risks,
+        "sbom_graph": sbom.graph_edges,
+        "sbom_assessment": sbom.groq_assessment,
     }
+    if status_store:
+        status_store.complete(scan_id, payload)
+    return payload
