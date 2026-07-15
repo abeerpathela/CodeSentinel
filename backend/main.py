@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from agents.codebreaker import run_scan
+from agents.mesh import run_mesh_scan
 from backend.config.llm_config import LLMConfig, LLMProvider
 
 app = FastAPI(
@@ -47,6 +47,10 @@ class ScanResponse(BaseModel):
     files_scanned: int
     findings: list[Finding]
     scan_file: str
+    audit_status: str = "approved"
+    retry_count: int = 0
+    memory_stored: bool = False
+    trace_file: str = ""
 
 
 @app.get("/health")
@@ -88,7 +92,7 @@ def codebreaker_scan(body: ScanRequest) -> ScanResponse:
         )
 
     try:
-        result = run_scan(body.repo_path, llm_config)
+        result = run_mesh_scan(body.repo_path, llm_config)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

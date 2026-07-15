@@ -58,7 +58,11 @@ tests/output/
 
 # --- Generated log & scan artifacts (explicit; logs/ above also applies) ---
 logs/scans/
+logs/traces/
 logs/**/*.json
 logs/**/*.jsonl
 logs/**/*.log
 phase1_errors.jsonl
+
+# --- Vector memory (ChromaDB local store) ---
+data/chroma/

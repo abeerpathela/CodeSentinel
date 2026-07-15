@@ -4,38 +4,42 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, TypedDict
-
-from langgraph.graph import END, StateGraph
+from typing import Any
 
 from backend.config.llm_config import LLMConfig, _extract_content
-from core.repo_reader import FileChunk, RepositoryReader
+from core.observability import TraceLogger
 
 SYSTEM_PROMPT = """You are an Offensive-Defensive AI security analyst for supply chain defense.
 
 Analyze the provided source code chunk and identify security issues in these categories:
 1. Hardcoded credentials (API keys, passwords, tokens, secrets in source)
-2. Remote command execution (os.system, subprocess with shell=True, unsanitized exec/eval)
+2. Remote Command Execution (RCE) — see strict definition below
 3. Supply chain anomalies (suspicious import names, typosquatting, obfuscated dependencies)
 4. Backdoors or logic bombs (hidden triggers, time bombs, unauthorized remote access)
+
+CRITICAL — Process Execution ≠ Remote Command Execution (RCE):
+- SAFE (do NOT flag): subprocess.run(["fixed", "args"], shell=False), subprocess.call with
+  literal argument lists, fixed executable paths, and NO untrusted/external input.
+- RCE ONLY applies when untrusted data (user input, environment variables, network/request
+  data, file uploads, CLI args) influences the command string, executable path, or arguments.
+- Examples of RCE: os.system(user_input), subprocess.run(cmd, shell=True) where cmd is tainted,
+  subprocess.run([exe, user_data]) where exe or user_data comes from untrusted sources.
 
 Return ONLY a JSON array. Each element must have exactly these keys:
 - file_path (string, relative path from the --- FILE: header)
 - vulnerability_type (string, e.g. "Hardcoded Credential", "Remote Command Execution")
 - severity (string: "High", "Medium", or "Low")
-- description (string, concise explanation)
+- description (string, concise explanation citing untrusted data flow when claiming RCE)
 
 If no issues are found, return an empty array: []
 Do not wrap the JSON in markdown fences."""
 
-
-class CodebreakerState(TypedDict):
-    repo_path: str
-    chunks: list[dict[str, Any]]
-    findings: list[dict[str, str]]
-    llm_config: LLMConfig
+TEST_FALSE_POSITIVE = {
+    "file_path": "safe_subprocess.py",
+    "vulnerability_type": "Remote Command Execution",
+    "severity": "High",
+    "description": "Uses subprocess.run which executes remote commands.",
+}
 
 
 def _parse_findings(raw: str) -> list[dict[str, str]]:
@@ -61,20 +65,50 @@ def _parse_findings(raw: str) -> list[dict[str, str]]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        finding = {
-            "file_path": str(item.get("file_path", "unknown")),
-            "vulnerability_type": str(item.get("vulnerability_type", "Unknown")),
-            "severity": str(item.get("severity", "Low")),
-            "description": str(item.get("description", "")),
-        }
-        findings.append(finding)
+        findings.append(
+            {
+                "file_path": str(item.get("file_path", "unknown")),
+                "vulnerability_type": str(item.get("vulnerability_type", "Unknown")),
+                "severity": str(item.get("severity", "Low")),
+                "description": str(item.get("description", "")),
+            }
+        )
     return findings
 
 
-def analyze_source_code(state: CodebreakerState) -> CodebreakerState:
+def prefetch_memory(state: dict[str, Any]) -> dict[str, Any]:
+    """Pre-fetch past mistakes from ChromaDB before Codebreaker analysis."""
+    memory = state["vector_memory"]
+    query = f"security scan {state['repo_path']}"
+    context = memory.query_past_mistakes(query)
+    trace: TraceLogger = state["trace_logger"]
+    trace.log_event("memory_prefetch", {"context_length": len(context), "memory_count": memory.count()})
+    return {**state, "memory_context": context}
+
+
+def analyze_source_code(state: dict[str, Any]) -> dict[str, Any]:
     """LangGraph node: send each chunk to Gemini (large context) for security analysis."""
-    llm = state["llm_config"].get_llm(large_context=True)
-    all_findings: list[dict[str, str]] = list(state.get("findings", []))
+    llm_config: LLMConfig = state["llm_config"]
+    trace: TraceLogger = state["trace_logger"]
+    llm = llm_config.get_llm(large_context=True)
+    model = llm_config.GEMINI_MODEL
+
+    retry_count = state.get("retry_count", 0)
+    is_first_pass = retry_count == 0 and not state.get("correction_prompt")
+
+    if is_first_pass and not state.get("initial_findings"):
+        state = {**state, "initial_findings": []}
+
+    system_parts = [SYSTEM_PROMPT]
+    memory_context = state.get("memory_context", "")
+    if memory_context:
+        system_parts.append(f"\n{memory_context}")
+    correction = state.get("correction_prompt")
+    if correction:
+        system_parts.append(f"\n{correction}")
+    system_content = "\n".join(system_parts)
+
+    all_findings: list[dict[str, str]] = []
 
     for chunk_data in state["chunks"]:
         file_list = ", ".join(chunk_data["file_paths"])
@@ -83,86 +117,39 @@ def analyze_source_code(state: CodebreakerState) -> CodebreakerState:
             f"Files in this chunk: {file_list}\n\n"
             f"{chunk_data['content']}"
         )
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_prompt},
+        ]
 
-        response = llm.invoke(
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ]
-        )
+        response = llm.invoke(messages)
         text = _extract_content(response)
-        all_findings.extend(_parse_findings(text))
+        chunk_findings = _parse_findings(text)
+        all_findings.extend(chunk_findings)
 
-    return {**state, "findings": all_findings}
+        trace.log_llm_call(
+            agent="codebreaker",
+            model=model,
+            llm_input=messages,
+            llm_output=text,
+            reasoning_path=f"Analyzed chunk [{file_list}] — {len(chunk_findings)} finding(s).",
+            metadata={"retry_count": retry_count, "chunk_files": chunk_data["file_paths"]},
+        )
 
+    if state.get("seed_test_false_positive") and is_first_pass:
+        all_findings.append(dict(TEST_FALSE_POSITIVE))
+        trace.log_event("seed_test_false_positive", {"finding": TEST_FALSE_POSITIVE})
 
-def build_codebreaker_graph() -> Any:
-    """Build a single-node LangGraph pipeline for source analysis."""
-    graph = StateGraph(CodebreakerState)
-    graph.add_node("analyze_source_code", analyze_source_code)
-    graph.set_entry_point("analyze_source_code")
-    graph.add_edge("analyze_source_code", END)
-    return graph.compile()
+    from agents.autopsy import _is_rce_false_positive
 
+    chunks = state.get("chunks", [])
+    if state.get("correction_prompt") or state.get("retry_count", 0) > 0:
+        all_findings = [
+            f for f in all_findings if not _is_rce_false_positive(f, chunks)
+        ]
 
-def _save_scan_results(repo_path: str, findings: list[dict[str, str]], files_scanned: int) -> Path:
-    scans_dir = Path(__file__).resolve().parents[1] / "logs" / "scans"
-    scans_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out_path = scans_dir / f"{timestamp}.json"
-    payload = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "repo_path": repo_path,
-        "files_scanned": files_scanned,
-        "findings": findings,
-    }
-    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return out_path
+    updates: dict[str, Any] = {**state, "findings": all_findings}
+    if is_first_pass:
+        updates["initial_findings"] = list(all_findings)
 
-
-def run_scan(repo_path: str, llm_config: LLMConfig) -> dict[str, Any]:
-    """Execute a full Codebreaker scan on a local repository path."""
-    root = Path(repo_path).resolve()
-    if not root.is_dir():
-        raise FileNotFoundError(f"Repository path does not exist: {repo_path}")
-
-    reader = RepositoryReader(root)
-    files = reader.discover_files()
-    chunks: list[FileChunk] = reader.chunk_for_llm()
-
-    chunk_payloads = [
-        {"file_paths": c.file_paths, "content": c.content, "byte_size": c.byte_size}
-        for c in chunks
-    ]
-
-    if not chunk_payloads:
-        findings: list[dict[str, str]] = []
-        scan_file = _save_scan_results(str(root), findings, 0)
-        return {
-            "scan_id": scan_file.stem,
-            "repo_path": str(root),
-            "files_scanned": 0,
-            "findings": findings,
-            "scan_file": str(scan_file),
-        }
-
-    graph = build_codebreaker_graph()
-    result = graph.invoke(
-        {
-            "repo_path": str(root),
-            "chunks": chunk_payloads,
-            "findings": [],
-            "llm_config": llm_config,
-        }
-    )
-
-    findings = result.get("findings", [])
-    scan_file = _save_scan_results(str(root), findings, len(files))
-
-    return {
-        "scan_id": scan_file.stem,
-        "repo_path": str(root),
-        "files_scanned": len(files),
-        "findings": findings,
-        "scan_file": str(scan_file),
-    }
+    return updates
