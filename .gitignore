@@ -48,3 +48,17 @@ agent_traces/
 
 logs/
 tests/
+
+# --- Manual / fixture test repos (local only, not project source) ---
+manual_test_repo/
+phase2_final_test/
+tests/fixtures/
+tests/output/
+**/fixture_repo/
+
+# --- Generated log & scan artifacts (explicit; logs/ above also applies) ---
+logs/scans/
+logs/**/*.json
+logs/**/*.jsonl
+logs/**/*.log
+phase1_errors.jsonl
