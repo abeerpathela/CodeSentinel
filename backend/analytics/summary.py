@@ -8,7 +8,7 @@ from typing import Any
 
 
 def load_scan_records(project_root: Path | None = None) -> list[dict[str, Any]]:
-    root = project_root or Path(__file__).resolve().parents[1]
+    root = project_root or Path(__file__).resolve().parents[2]
     scans_dir = root / "logs" / "scans"
     if not scans_dir.is_dir():
         return []

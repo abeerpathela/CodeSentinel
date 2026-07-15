@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { Activity, Brain, FileWarning, ShieldCheck } from "lucide-react";
+import { motion } from "framer-motion";
+import { Activity, Brain, FileWarning, Shield, ShieldCheck, Zap } from "lucide-react";
 import ScanEngine from "./components/ScanEngine";
 import ThreatHeatmap from "./components/ThreatHeatmap";
 import AutopsyFeed from "./components/AutopsyFeed";
 import RiskGraph from "./components/RiskGraph";
+import SupplyChainTable from "./components/SupplyChainTable";
 import {
   api,
   pollScan,
   type AnalyticsSummary,
+  type ResilienceMetrics,
   type ScanResult,
   type ScanStatus,
 } from "./lib/api";
@@ -19,21 +22,25 @@ export default function App() {
   const [feed, setFeed] = useState<ScanStatus["feed"]>([]);
   const [feedStatus, setFeedStatus] = useState("idle");
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [resilience, setResilience] = useState<ResilienceMetrics | null>(null);
+  const [hasScans, setHasScans] = useState(false);
 
-  const refreshSummary = useCallback(async () => {
+  const refreshMetrics = useCallback(async () => {
     try {
-      const s = await api.summary();
+      const [s, r] = await Promise.all([api.summary(), api.resilience()]);
       setSummary(s);
+      setResilience(r);
+      setHasScans(s.total_scans > 0);
     } catch {
-      /* backend may be starting */
+      /* backend starting — stay in ready state */
     }
   }, []);
 
   useEffect(() => {
-    refreshSummary();
-    const id = setInterval(refreshSummary, 5000);
+    refreshMetrics();
+    const id = setInterval(refreshMetrics, 5000);
     return () => clearInterval(id);
-  }, [refreshSummary]);
+  }, [refreshMetrics]);
 
   const handleScan = async () => {
     if (!repoPath.trim()) return;
@@ -50,11 +57,10 @@ export default function App() {
         if (status.status === "complete" && status.result) {
           setScanResult(status.result);
           setScanning(false);
-          refreshSummary();
+          setHasScans(true);
+          refreshMetrics();
         }
-        if (status.status === "error") {
-          setScanning(false);
-        }
+        if (status.status === "error") setScanning(false);
       });
       setTimeout(() => stop(), 300000);
     } catch (err) {
@@ -65,43 +71,96 @@ export default function App() {
   };
 
   const riskyNodes = (scanResult?.sbom_risks || []).map((r) => r.name);
+  const showReadyState = !hasScans && !scanning && !scanResult;
 
   return (
-    <div className="min-h-screen p-6">
-      <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
+    <div className="min-h-screen p-4 md:p-6">
+      <motion.header
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-8 flex flex-wrap items-end justify-between gap-4"
+      >
         <div>
-          <p className="font-mono text-xs uppercase tracking-[0.3em] text-cyber-accent">
-            CodeSentinel v0.4
+          <p className="font-mono text-xs uppercase tracking-[0.35em] text-cyber-accent">
+            Sentinel Command &amp; Control
           </p>
-          <h1 className="text-3xl font-bold tracking-tight">Analyst Dashboard</h1>
+          <h1 className="bg-gradient-to-r from-cyan-300 to-slate-200 bg-clip-text text-3xl font-bold tracking-tight text-transparent">
+            CodeSentinel Dashboard
+          </h1>
           <p className="mt-1 text-sm text-cyber-muted">
-            Agentic Supply Chain Defense — Codebreaker + Autopsy + SBOM
+            Agentic Supply Chain Defense — Codebreaker · Autopsy · SBOM
           </p>
         </div>
-        {summary && (
-          <div className="flex flex-wrap gap-4">
+        {summary && hasScans && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-wrap gap-3"
+          >
             <Stat icon={<ShieldCheck className="h-4 w-4" />} label="Files Scanned" value={summary.total_files_scanned} />
             <Stat icon={<FileWarning className="h-4 w-4" />} label="Vulns Caught" value={summary.total_vulnerabilities_caught} />
             <Stat icon={<Brain className="h-4 w-4" />} label="Autopsy Wins" value={summary.total_self_corrections} />
-            <Stat icon={<Activity className="h-4 w-4" />} label="Win Rate" value={`${summary.autopsy_win_rate_pct}%`} />
-          </div>
+            <Stat icon={<Zap className="h-4 w-4" />} label="Resilience" value={`${resilience?.resilience_score ?? 0}%`} />
+          </motion.div>
         )}
-      </header>
+      </motion.header>
+
+      {showReadyState && (
+        <motion.div
+          initial={{ opacity: 0, scale: 0.98 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="cyber-panel mb-8 flex flex-col items-center justify-center gap-4 py-16 text-center"
+        >
+          <Shield className="h-16 w-16 text-cyber-accent opacity-80" />
+          <h2 className="text-2xl font-semibold">Ready to Secure Infrastructure</h2>
+          <p className="max-w-md text-sm text-cyber-muted">
+            Enter a local repository path and launch a Shield Scan. Codebreaker (Gemini) and Autopsy
+            (Groq) will analyze source code and supply-chain dependencies in real time.
+          </p>
+        </motion.div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-2">
           <ScanEngine repoPath={repoPath} onChange={setRepoPath} onScan={handleScan} scanning={scanning} />
-          <ThreatHeatmap findings={scanResult?.findings || []} sbomRisks={scanResult?.sbom_risks} />
-          <RiskGraph
-            repoName={scanResult?.repo_path?.split(/[/\\]/).pop() || "Your Repo"}
-            edges={scanResult?.sbom_graph || []}
-            riskyNodes={riskyNodes}
+          {(scanResult || hasScans) && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+              <ThreatHeatmap findings={scanResult?.findings || []} sbomRisks={scanResult?.sbom_risks} />
+              <SupplyChainTable risks={scanResult?.sbom_risks || []} />
+              <RiskGraph
+                repoName={scanResult?.repo_path?.split(/[/\\]/).pop() || "Repository"}
+                edges={scanResult?.sbom_graph || []}
+                riskyNodes={riskyNodes}
+              />
+            </motion.div>
+          )}
+        </div>
+        <div className="min-h-[520px]">
+          <AutopsyFeed
+            feed={feed}
+            status={feedStatus}
+            selfCorrection={
+              scanResult?.self_correction_triggered ||
+              feed.some((f) => f.message.toLowerCase().includes("corrected"))
+            }
           />
         </div>
-        <div className="min-h-[480px]">
-          <AutopsyFeed feed={feed} status={feedStatus} />
-        </div>
       </div>
+
+      {resilience && hasScans && (
+        <motion.footer
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="cyber-panel mt-6 flex flex-wrap items-center gap-6 p-4 text-xs text-cyber-muted"
+        >
+          <span className="flex items-center gap-1">
+            <Activity className="h-3 w-3 text-cyber-accent" />
+            Resilience Score: <strong className="text-cyber-text">{resilience.resilience_score}%</strong>
+          </span>
+          <span>FP Correction: {(resilience.false_positive_correction_rate * 100).toFixed(1)}%</span>
+          <span>Detection Precision: {(resilience.detection_precision * 100).toFixed(1)}%</span>
+        </motion.footer>
+      )}
     </div>
   );
 }

@@ -19,7 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from agents.mesh import run_mesh_scan
-from backend.analytics import compute_summary, load_scan_records
+from backend.analytics.metrics import compute_resilience
+from backend.analytics.summary import compute_summary, load_scan_records
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
 
@@ -188,6 +189,11 @@ def scan_status(scan_id: str) -> dict:
 @app.get("/analytics/summary")
 def analytics_summary() -> dict:
     return compute_summary()
+
+
+@app.get("/analytics/resilience")
+def analytics_resilience() -> dict:
+    return compute_resilience()
 
 
 @app.get("/analytics/scans")

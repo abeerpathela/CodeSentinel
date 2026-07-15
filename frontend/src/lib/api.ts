@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export interface Finding {
   file_path: string;
@@ -13,6 +14,7 @@ export interface SBOMRisk {
   risk_level: string;
   transitive_of?: string | null;
   notes?: string;
+  ecosystem?: string;
 }
 
 export interface ScanResult {
@@ -44,6 +46,15 @@ export interface AnalyticsSummary {
   severity_breakdown: Record<string, number>;
 }
 
+export interface ResilienceMetrics {
+  resilience_score: number;
+  false_positive_correction_rate: number;
+  detection_precision: number;
+  false_positive_attempts: number;
+  false_positives_corrected: number;
+  total_scans: number;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -62,14 +73,10 @@ export const api = {
       "/codebreaker/scan",
       { method: "POST", body: JSON.stringify({ repo_path, async_scan: true }) }
     ),
-  scanSync: (repo_path: string) =>
-    request<ScanResult>("/codebreaker/scan", {
-      method: "POST",
-      body: JSON.stringify({ repo_path, async_scan: false }),
-    }),
   scanStatus: (scan_id: string) =>
     request<ScanStatus>(`/scan/${scan_id}/status`),
   summary: () => request<AnalyticsSummary>("/analytics/summary"),
+  resilience: () => request<ResilienceMetrics>("/analytics/resilience"),
   health: () => request<{ status: string }>("/health"),
 };
 
