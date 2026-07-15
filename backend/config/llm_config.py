@@ -19,8 +19,10 @@ class LLMProvider(str, Enum):
 class LLMConfig:
     """Switchboard that routes requests to Groq or Gemini based on task profile."""
 
+    # llama-3.1-70b-versatile was decommissioned by Groq (Jan 2025).
     GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    # gemini-1.5-flash is retired on current API keys; 2.5-flash keeps free-tier quota.
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     MAX_RETRIES = 2  # MVP loop limit: 2 retry attempts maximum
 
