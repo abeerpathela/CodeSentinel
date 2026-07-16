@@ -6,9 +6,8 @@ import threading
 import time
 from dataclasses import dataclass
 
-from backend.config.settings import get_settings
-from core.workspace_manager import WorkspaceManager
-from core.github_handler import GitHubHandler
+from backend.config import get_settings
+from core.workspace import WorkspaceManager
 
 
 @dataclass
@@ -23,7 +22,6 @@ _workspaces: dict[str, WorkspaceRecord] = {}
 
 
 def register_workspace(scan_id: str) -> None:
-    """Mark scan workspace as retained for deployment."""
     ttl = get_settings().scan_workspace_ttl_seconds
     now = time.time()
     with _lock:
@@ -35,14 +33,12 @@ def register_workspace(scan_id: str) -> None:
 
 
 def release_workspace(scan_id: str) -> None:
-    """Remove workspace immediately (after successful deploy)."""
     with _lock:
         _workspaces.pop(scan_id, None)
-    GitHubHandler.cleanup(WorkspaceManager.get_path(scan_id))
+    WorkspaceManager.release_workspace(scan_id)
 
 
 def sweep_expired_workspaces() -> list[str]:
-    """Delete workspaces past TTL. Returns cleaned scan_ids."""
     now = time.time()
     expired: list[str] = []
     with _lock:
@@ -51,7 +47,7 @@ def sweep_expired_workspaces() -> list[str]:
                 expired.append(scan_id)
                 _workspaces.pop(scan_id, None)
     for scan_id in expired:
-        GitHubHandler.cleanup(WorkspaceManager.get_path(scan_id))
+        WorkspaceManager.release_workspace(scan_id)
     return expired
 
 

@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from backend.config.llm_config import LLMConfig, _extract_content
+from backend.llm_config import LLMConfig, _extract_content
 from core.observability import TraceLogger
 
 AUDITOR_SYSTEM_PROMPT = """You are a Senior Security Auditor reviewing Codebreaker findings.

@@ -26,7 +26,7 @@ def main() -> None:
 
     from fastapi.testclient import TestClient
 
-    from core.workspace_manager import WorkspaceManager
+    from core.workspace import WorkspaceManager
     from backend.main import app
 
     client = TestClient(app)
@@ -49,7 +49,7 @@ def main() -> None:
     files = data.get("files_scanned", 0)
     total_threats = len(findings) + len(sbom)
 
-    workspace = WorkspaceManager.get_path(scan_id)
+    workspace = WorkspaceManager.get_workspace(scan_id)
     rel = WorkspaceManager.instance().describe_root()
     print(f"[INFO] scan_id={scan_id} files={files} threats={total_threats}")
     print(f"[INFO] workspace retained at {rel}/{scan_id}")

@@ -9,7 +9,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-from core.workspace_manager import WorkspaceManager
+from core.workspace import WorkspaceManager
 
 
 class GitHubCloneError(Exception):
@@ -34,11 +34,11 @@ class GitHubHandler:
     """Transparently clone public GitHub repos into isolated temp scan workspaces."""
 
     def __init__(self) -> None:
-        self.temp_root = WorkspaceManager.instance().ensure_root()
+        self.temp_root = WorkspaceManager.instance().root
 
     @classmethod
     def ensure_temp_root(cls) -> Path:
-        return WorkspaceManager.instance().ensure_root()
+        return WorkspaceManager.instance().root
 
     @staticmethod
     def is_github_url(input_string: str) -> bool:
@@ -57,12 +57,12 @@ class GitHubHandler:
         return f"https://github.com/{match.group('owner')}/{match.group('repo')}.git"
 
     def clone_repository(self, url: str, scan_id: str) -> Path:
-        """Shallow-clone into TEMP_SCAN_ROOT/[scan_id] — folder name equals scan_id."""
+        """Shallow-clone into an ephemeral sentinel_* workspace."""
         clone_url = self.normalize_url(url)
-        dest = WorkspaceManager.get_path(scan_id)
-        if dest.exists():
-            self.cleanup(dest)
-        dest.mkdir(parents=True, exist_ok=False)
+        dest = WorkspaceManager.get_workspace(scan_id)
+        if any(dest.iterdir()):
+            WorkspaceManager.release_workspace(scan_id)
+            dest = WorkspaceManager.get_workspace(scan_id)
 
         clone_env = os.environ.copy()
         # Avoid optional lock files that can block later .git removal on Windows.
@@ -78,17 +78,17 @@ class GitHubHandler:
                 env=clone_env,
             )
         except FileNotFoundError as exc:
-            self.cleanup(dest)
+            WorkspaceManager.release_workspace(scan_id)
             raise GitHubCloneError(
                 "GitHub Clone Failed: Git is not installed or not on PATH.",
                 code="git_missing",
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            self.cleanup(dest)
+            WorkspaceManager.release_workspace(scan_id)
             raise GitHubCloneError(code="timeout") from exc
 
         if proc.returncode != 0:
-            self.cleanup(dest)
+            WorkspaceManager.release_workspace(scan_id)
             raise GitHubCloneError()
 
         self.release_git_locks(dest)

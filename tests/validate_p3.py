@@ -50,7 +50,7 @@ def _has_rce_finding(findings: list[dict]) -> bool:
 
 def validate() -> None:
     from agents.mesh import run_mesh_scan
-    from backend.config.llm_config import LLMConfig
+    from backend.llm_config import LLMConfig
     from core.memory import STANDARD_PRACTICE_RCE_ID, STANDARD_PRACTICE_RCE_TEXT, VectorMemory
 
     if not os.getenv("GROQ_API_KEY") or not os.getenv("GEMINI_API_KEY"):

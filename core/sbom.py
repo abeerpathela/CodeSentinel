@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from backend.config.llm_config import LLMConfig, _extract_content
-from backend.config.settings import get_settings
+from backend.llm_config import LLMConfig, _extract_content
+from backend.config import get_settings
 
 # Simulated threat intelligence — known vulnerable versions
 VULNERABLE_PACKAGES: dict[str, str] = {

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Render / uvicorn: ensure project root is on PYTHONPATH before package imports
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +21,8 @@ from pydantic import BaseModel, Field
 from agents.mesh import run_mesh_scan
 from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
-from backend.config.llm_config import LLMConfig, LLMProvider
-from backend.config.settings import PROJECT_ROOT, get_settings
+from backend.config import PROJECT_ROOT, get_settings
+from backend.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
 from backend.services.github_deploy import GitHubDeployError, GitHubDeployService, ScanWorkspaceGoneError
 from backend.services.progress_stream import ProgressTracker
@@ -25,7 +31,7 @@ from backend.services.scan_stream import _stage_local_workspace, iter_scan
 from backend.services.workspace_gc import start_workspace_gc
 from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
-from core.workspace_manager import WorkspaceManager
+from core.workspace import WorkspaceManager
 
 settings = get_settings()
 _log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
@@ -42,7 +48,7 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def _startup() -> None:
-    WorkspaceManager.instance().ensure_root()
+    WorkspaceManager.instance()
     sweep_expired_workspaces()
     start_workspace_gc()
 
@@ -172,7 +178,7 @@ def _resolve_scan_target(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         _push_feed(scan_id, "✅ Ingestion Complete: Passing source to Codebreaker...", stage="scanning")
         register_workspace(scan_id)
-        return str(WorkspaceManager.get_path(scan_id))
+        return str(WorkspaceManager.get_workspace(scan_id))
 
     if stripped.lower().startswith(("http://", "https://")):
         raise HTTPException(
@@ -186,7 +192,7 @@ def _resolve_scan_target(
 
     _stage_local_workspace(scan_id, local.resolve())
     register_workspace(scan_id)
-    return str(WorkspaceManager.get_path(scan_id))
+    return str(WorkspaceManager.get_workspace(scan_id))
 
 
 def _finalize_scan_result(result: dict) -> dict:
@@ -448,3 +454,15 @@ def deploy_ship(
         raise HTTPException(status_code=410, detail=str(exc)) from exc
     except GitHubDeployError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    _settings = get_settings()
+    uvicorn.run(
+        "backend.main:app",
+        host="0.0.0.0",
+        port=_settings.port,
+        log_level="warning" if _settings.is_production else "info",
+    )

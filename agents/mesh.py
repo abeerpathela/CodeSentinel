@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 
 from agents.autopsy import audit_diagnostics
 from agents.codebreaker import analyze_source_code, prefetch_memory
-from backend.config.llm_config import LLMConfig
+from backend.llm_config import LLMConfig
 from core.memory import VectorMemory
 from core.observability import TraceLogger
 

@@ -10,9 +10,9 @@ from typing import Any
 
 import requests
 
-from backend.config.settings import Settings, get_settings
+from backend.config import Settings, get_settings
 from core.github_deploy import GitDeployError, deploy_fresh_source
-from core.workspace_manager import WorkspaceManager
+from core.workspace import WorkspaceManager
 
 GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -96,9 +96,8 @@ class GitHubDeployService:
 
     @staticmethod
     def resolve_deploy_path(scan_id: str) -> Path:
-        """Locate scan workspace by scan_id only."""
-        path = WorkspaceManager.get_path(scan_id)
-        if not path.exists() or not path.is_dir():
+        path = WorkspaceManager.get_existing(scan_id)
+        if path is None:
             raise ScanWorkspaceGoneError(
                 f"Session directory [{scan_id}] no longer exists or was cleaned up."
             )
@@ -113,7 +112,6 @@ class GitHubDeployService:
         description: str = "CodeSentinel secured deployment",
         on_progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """Create a new private repo and push a fresh-source snapshot from scan_id workspace."""
         root = self.resolve_deploy_path(scan_id)
 
         headers = {
@@ -134,7 +132,6 @@ class GitHubDeployService:
         repo_data = create_resp.json()
         clone_url = repo_data.get("clone_url", "")
         html_url = repo_data.get("html_url", "")
-
         authed_url = clone_url.replace("https://", f"https://{token}@")
 
         try:

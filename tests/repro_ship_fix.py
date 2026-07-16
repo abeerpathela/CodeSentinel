@@ -12,13 +12,13 @@ TEST_ID = "test_id_123"
 
 
 def main() -> None:
-    from core.workspace_manager import WorkspaceManager
+    from core.workspace import WorkspaceManager
     from backend.services.github_deploy import GitHubDeployService, ScanWorkspaceGoneError
     from backend.services.scan_session import register_workspace
     from core.github_handler import GitHubHandler
 
     handler = GitHubHandler()
-    dest = WorkspaceManager.get_path(TEST_ID)
+    dest = WorkspaceManager.get_workspace(TEST_ID)
     if dest.exists():
         handler.cleanup(dest)
     dest.mkdir(parents=True)

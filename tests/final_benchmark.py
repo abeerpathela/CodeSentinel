@@ -52,7 +52,7 @@ def validate() -> None:
         print("[FAIL] GROQ_API_KEY and GEMINI_API_KEY required.", file=sys.stderr)
         sys.exit(1)
 
-    from backend.config.llm_config import LLMConfig
+    from backend.llm_config import LLMConfig
     from core.repo_reader import RepositoryReader
     from agents.mesh import run_mesh_scan
 

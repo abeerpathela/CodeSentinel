@@ -5,29 +5,32 @@
 body {
   @apply bg-cyber-bg text-cyber-text antialiased font-sans;
   background-image:
-    radial-gradient(ellipse at 15% 0%, rgba(16, 185, 129, 0.06) 0%, transparent 55%),
-    radial-gradient(ellipse at 85% 100%, rgba(249, 115, 22, 0.04) 0%, transparent 50%);
+    radial-gradient(ellipse at 12% 0%, rgba(0, 255, 65, 0.04) 0%, transparent 55%),
+    radial-gradient(ellipse at 88% 100%, rgba(255, 75, 43, 0.03) 0%, transparent 50%);
   min-height: 100vh;
 }
 
 @layer components {
   .cyber-panel {
-    @apply rounded-xl border border-white/5 bg-cyber-panel/90 backdrop-blur-xl shadow-glow;
+    @apply rounded-xl border border-white/5 bg-cyber-panel/95 backdrop-blur-xl shadow-glow;
   }
   .cyber-input {
     @apply w-full rounded-lg border border-white/5 bg-cyber-bg px-4 py-3 font-mono text-sm
            text-cyber-text placeholder-cyber-muted focus:border-cyber-accent focus:outline-none
-           focus:ring-1 focus:ring-cyber-accent/50;
+           focus:ring-1 focus:ring-cyber-accent/40;
   }
   .cyber-btn {
-    @apply inline-flex items-center gap-2 rounded-lg bg-cyber-accent px-5 py-3 font-semibold
-           text-cyber-bg transition hover:bg-emerald-400 disabled:opacity-50;
+    @apply inline-flex items-center gap-2 rounded-lg bg-cyber-accent px-5 py-3 font-mono text-sm font-semibold
+           text-black transition hover:brightness-110 disabled:opacity-50;
   }
   .tactical-advisory {
-    @apply rounded-lg border border-white/5 bg-black/40 p-4 font-mono text-sm backdrop-blur-xl;
+    @apply rounded-lg border border-white/5 bg-black/50 p-4 font-mono text-sm backdrop-blur-xl;
   }
   .tactical-advisory-header {
-    @apply mb-2 flex items-center justify-between border-b border-white/5 pb-2 text-[10px] uppercase tracking-[0.25em] text-cyber-muted;
+    @apply mb-2 flex items-center justify-between border-b border-white/5 pb-2 font-mono text-[10px] uppercase tracking-[0.25em] text-cyber-muted;
+  }
+  .soc-feed {
+    @apply font-mono text-xs leading-relaxed text-cyber-text;
   }
 }
 
@@ -36,31 +39,25 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 12px rgba(16, 185, 129, 0.08); }
-  50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.18); }
-}
-
 .animate-slide-up {
   animation: slide-up 0.35s ease-out;
 }
 
 .war-room-bg {
   background-image:
-    radial-gradient(ellipse at 50% 0%, rgba(249, 115, 22, 0.05) 0%, transparent 60%),
-    radial-gradient(ellipse at 20% 0%, rgba(16, 185, 129, 0.06) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 100%, rgba(239, 68, 68, 0.04) 0%, transparent 50%);
+    radial-gradient(ellipse at 50% 0%, rgba(255, 75, 43, 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 18% 0%, rgba(0, 255, 65, 0.05) 0%, transparent 50%);
 }
 
 .glass-panel {
-  @apply rounded-2xl border border-white/5 bg-white/[0.03] shadow-glow backdrop-blur-xl;
+  @apply rounded-2xl border border-white/5 bg-white/[0.02] shadow-glow backdrop-blur-xl;
 }
 
 .glass-sidebar {
-  @apply border-r border-white/5 bg-[#020202]/85 backdrop-blur-xl;
+  @apply border-r border-white/5 bg-[#050505]/90 backdrop-blur-xl;
 }
 
 .terminal-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgba(16, 185, 129, 0.3) transparent;
+  scrollbar-color: rgba(0, 255, 65, 0.25) transparent;
 }

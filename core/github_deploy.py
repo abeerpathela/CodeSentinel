@@ -8,7 +8,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from backend.config.settings import get_settings
+from backend.config import get_settings
 
 _settings = get_settings()
 GIT_USER_NAME = _settings.git_deploy_user_name

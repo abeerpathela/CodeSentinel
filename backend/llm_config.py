@@ -9,7 +9,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 
-from backend.config.settings import Settings, get_settings
+from backend.config import Settings, get_settings
 
 
 class LLMProvider(str, Enum):
@@ -36,7 +36,6 @@ class LLMConfig:
         return self._settings.llm_max_retries
 
     def get_provider(self, *, large_context: bool = False) -> LLMProvider:
-        """Select provider: Gemini for large code files, Groq for fast logic."""
         return LLMProvider.GEMINI if large_context else LLMProvider.GROQ
 
     def _build_groq(self) -> ChatGroq:
@@ -67,7 +66,6 @@ class LLMConfig:
         provider: LLMProvider | None = None,
         large_context: bool = False,
     ) -> BaseChatModel:
-        """Return a LangChain chat model for the requested provider."""
         selected = provider or self.get_provider(large_context=large_context)
         if selected == LLMProvider.GROQ:
             return self._build_groq()
@@ -82,13 +80,11 @@ class LLMConfig:
         provider: LLMProvider | None = None,
         large_context: bool = False,
     ) -> str:
-        """Send a prompt through the switchboard and return text content."""
         llm = self.get_llm(provider=provider, large_context=large_context)
         response = llm.invoke(prompt)
         return _extract_content(response)
 
     def health_check(self) -> dict[str, Any]:
-        """Ping both providers with a minimal prompt."""
         results: dict[str, Any] = {}
         for provider in LLMProvider:
             try:

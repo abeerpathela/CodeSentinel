@@ -62,7 +62,7 @@ def _classify_error(exc: Exception) -> str:
 
 
 def validate() -> str:
-    from backend.config.llm_config import LLMConfig, LLMProvider
+    from backend.llm_config import LLMConfig, LLMProvider
 
     failures = 0
     results: dict[str, str] = {}

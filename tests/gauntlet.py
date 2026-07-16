@@ -126,7 +126,7 @@ def run_gauntlet() -> dict:
         print("[FAIL] GROQ_API_KEY required.", file=sys.stderr)
         sys.exit(1)
 
-    from backend.config.llm_config import LLMConfig
+    from backend.llm_config import LLMConfig
     from core.reporter import ReportEngine
 
     fixtures = _resolve_fixtures()
