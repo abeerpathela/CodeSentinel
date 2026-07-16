@@ -24,6 +24,7 @@ from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
+from core.github_repo import GitHubCloneError, GitHubManager
 from core.reporter import ReportEngine
 
 app = FastAPI(
@@ -130,26 +131,97 @@ def switchboard_invoke(body: PromptRequest) -> PromptResponse:
     return PromptResponse(provider=provider.value, response=text)
 
 
-def _execute_scan(repo_path: str, scan_id: str) -> None:
+def _resolve_scan_target(
+    repo_input: str,
+    *,
+    scan_id: str | None = None,
+) -> tuple[str, Path | None]:
+    """
+    Resolve local path or GitHub URL to a scannable directory.
+    Returns (scan_path, temp_clone_path) — temp path must be cleaned up after scan.
+    """
+    stripped = repo_input.strip()
+    if stripped.lower().startswith(("http://", "https://")):
+        if not GitHubManager.is_github_url(stripped):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid repository URL. Only public GitHub URLs are supported.",
+            )
+        manager = GitHubManager()
+        try:
+            if scan_id:
+                scan_status_store.push(
+                    scan_id,
+                    f"Cloning {stripped} (depth=1)…",
+                    stage="cloning",
+                )
+            cloned = manager.clone(stripped)
+            if scan_id:
+                scan_status_store.push(
+                    scan_id,
+                    f"Clone complete: {cloned.name}",
+                    stage="scanning",
+                )
+            return str(cloned), cloned
+        except GitHubCloneError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    local = Path(stripped)
+    if not local.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Repository path does not exist: {stripped}",
+        )
+    return str(local.resolve()), None
+
+
+def _finalize_scan_result(result: dict) -> dict:
+    """Generate per-scan SENTINEL_ADVISORY artifact."""
     try:
-        run_mesh_scan(
-            repo_path,
+        advisory_path = ReportEngine().save_sentinel_advisory(result)
+        result["advisory_file"] = str(advisory_path)
+    except Exception:
+        result["advisory_file"] = ""
+    return result
+
+
+def _execute_scan(repo_input: str, scan_id: str) -> None:
+    cloned_path: Path | None = None
+    try:
+        scan_path, cloned_path = _resolve_scan_target(repo_input, scan_id=scan_id)
+        result = run_mesh_scan(
+            scan_path,
             llm_config,
             scan_id=scan_id,
             status_store=scan_status_store,
         )
+        _finalize_scan_result(result)
+    except HTTPException as exc:
+        scan_status_store.fail(scan_id, str(exc.detail))
     except Exception as exc:
         scan_status_store.fail(scan_id, str(exc))
+    finally:
+        if cloned_path:
+            GitHubManager.cleanup(cloned_path)
+            entry = scan_status_store.get(scan_id)
+            if entry and entry.get("status") != "error":
+                scan_status_store.push(
+                    scan_id, "Temporary clone cleaned up.", stage="complete"
+                )
 
 
 @app.post("/codebreaker/scan")
 def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
-    repo = Path(body.repo_path)
-    if not repo.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Repository path does not exist: {body.repo_path}",
-        )
+    stripped = body.repo_path.strip()
+    is_remote = stripped.lower().startswith(("http://", "https://"))
+
+    if not is_remote:
+        local = Path(stripped)
+        if not local.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository path does not exist: {body.repo_path}",
+            )
 
     if body.async_scan:
         scan_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -164,18 +236,26 @@ def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
             message="Scan started. Poll /scan/{scan_id}/status for live feed.",
         )
 
+    cloned_path: Path | None = None
     try:
+        scan_path, cloned_path = _resolve_scan_target(body.repo_path)
         result = run_mesh_scan(
-            body.repo_path,
+            scan_path,
             llm_config,
             status_store=scan_status_store,
         )
+        result = _finalize_scan_result(result)
+    except HTTPException:
+        raise
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        if cloned_path:
+            GitHubManager.cleanup(cloned_path)
 
     return ScanResponse(**result)
 
@@ -227,7 +307,7 @@ FIXTURE_CATALOG = [
         "name": "Time-Delayed Logic Bomb",
         "category": "Logic Bomb",
         "description": "Obfuscated base64 payload executed after a maintenance window check.",
-        "folder": "logic_bomb",
+        "folder": "logic_bomb/py",
     },
     {
         "id": "complex_rce",

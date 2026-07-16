@@ -22,7 +22,7 @@ except ImportError:
 
 FIXTURES = {
     "supply_chain": ROOT / "fixtures" / "exploits" / "supply_chain",
-    "logic_bomb": ROOT / "fixtures" / "exploits" / "logic_bomb",
+    "logic_bomb": ROOT / "fixtures" / "exploits" / "logic_bomb" / "py",
     "complex_rce": ROOT / "fixtures" / "exploits" / "complex_rce",
 }
 

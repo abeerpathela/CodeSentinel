@@ -25,8 +25,8 @@ export default function LandingPage() {
             Sentinel Command Center
           </h1>
           <p className="max-w-lg text-lg text-cyber-muted">
-            Immersive agentic defense for supply-chain threats. Codebreaker scans, Autopsy
-            self-corrects, and SBOM maps your attack surface in real time.
+            Immersive agentic defense for supply-chain threats. Scan local repos or public
+            GitHub URLs — Codebreaker analyzes, Autopsy self-corrects, SBOM maps your surface.
           </p>
           <div className="flex flex-wrap gap-4">
             <button

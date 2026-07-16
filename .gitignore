@@ -60,6 +60,7 @@ pnpm-debug.log*
 
 # --- AI / Databases / Vector Memory ---
 data/
+backend/data/temp_scans/
 .chroma/
 chroma/
 vector_storage/

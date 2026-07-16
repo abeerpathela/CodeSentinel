@@ -10,11 +10,14 @@ interface Props {
   compact?: boolean;
 }
 
-const PALETTE: Record<ThreatLevel, { color: string; emissive: string; speed: number; pulse: number }> = {
-  idle: { color: "#06b6d4", emissive: "#0891b2", speed: 0.35, pulse: 0.04 },
-  scanning: { color: "#22d3ee", emissive: "#06b6d4", speed: 0.9, pulse: 0.12 },
-  clean: { color: "#34d399", emissive: "#059669", speed: 0.25, pulse: 0.03 },
-  threat: { color: "#ef4444", emissive: "#dc2626", speed: 2.2, pulse: 0.22 },
+const PALETTE: Record<
+  ThreatLevel,
+  { color: string; emissive: string; speed: number; pulse: number; label: string; emoji: string }
+> = {
+  idle: { color: "#22c55e", emissive: "#16a34a", speed: 0.3, pulse: 0.03, label: "Standby", emoji: "🟢" },
+  cloning: { color: "#eab308", emissive: "#ca8a04", speed: 1.1, pulse: 0.14, label: "Cloning", emoji: "🟡" },
+  scanning: { color: "#f97316", emissive: "#ea580c", speed: 1.4, pulse: 0.16, label: "Scanning", emoji: "🟠" },
+  threat: { color: "#ef4444", emissive: "#dc2626", speed: 2.4, pulse: 0.24, label: "Critical", emoji: "🔴" },
 };
 
 function CyberOrb({ threatLevel }: { threatLevel: ThreatLevel }) {
@@ -43,8 +46,8 @@ function CyberOrb({ threatLevel }: { threatLevel: ThreatLevel }) {
           <MeshDistortMaterial
             color={cfg.color}
             emissive={cfg.emissive}
-            emissiveIntensity={threatLevel === "threat" ? 1.2 : 0.6}
-            distort={threatLevel === "threat" ? 0.45 : 0.28}
+            emissiveIntensity={threatLevel === "threat" ? 1.3 : 0.65}
+            distort={threatLevel === "threat" ? 0.5 : 0.28}
             speed={cfg.speed}
             roughness={0.15}
             metalness={0.85}
@@ -56,24 +59,20 @@ function CyberOrb({ threatLevel }: { threatLevel: ThreatLevel }) {
           <icosahedronGeometry args={[1.35, 2]} />
           <meshBasicMaterial color={cfg.color} wireframe transparent opacity={0.35} />
         </mesh>
-        <pointLight color={cfg.emissive} intensity={threatLevel === "threat" ? 3 : 1.8} distance={8} />
+        <pointLight color={cfg.emissive} intensity={threatLevel === "threat" ? 3.2 : 1.8} distance={8} />
         <ambientLight intensity={0.15} />
       </group>
     </Float>
   );
 }
 
-function OrbFallback() {
-  return (
-    <div className="flex h-full w-full items-center justify-center">
-      <div className="h-24 w-24 animate-pulse rounded-full bg-cyan-500/20 blur-xl" />
-    </div>
-  );
-}
-
 export default function SentinelOrb({ threatLevel = "idle", className = "", compact = false }: Props) {
   const height = compact ? "h-48" : "h-[420px]";
-  const camera = useMemo(() => ({ position: [0, 0, compact ? 4 : 3.2] as [number, number, number], fov: 45 }), [compact]);
+  const camera = useMemo(
+    () => ({ position: [0, 0, compact ? 4 : 3.2] as [number, number, number], fov: 45 }),
+    [compact]
+  );
+  const cfg = PALETTE[threatLevel];
 
   return (
     <div className={`relative overflow-hidden rounded-2xl ${height} ${className}`}>
@@ -84,10 +83,7 @@ export default function SentinelOrb({ threatLevel = "idle", className = "", comp
         </Suspense>
       </Canvas>
       <div className="pointer-events-none absolute bottom-3 left-0 right-0 text-center font-mono text-[10px] uppercase tracking-[0.3em] text-cyber-muted">
-        {threatLevel === "threat" && "⚠ Threat Detected"}
-        {threatLevel === "scanning" && "◉ Mesh Scanning"}
-        {threatLevel === "clean" && "✓ Perimeter Secure"}
-        {threatLevel === "idle" && "◇ Sentinel Standby"}
+        {cfg.emoji} {cfg.label}
       </div>
     </div>
   );

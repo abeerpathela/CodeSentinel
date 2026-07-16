@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   api,
+  parseScanError,
   pollScan,
   type AnalyticsSummary,
   type ResilienceMetrics,
@@ -8,7 +9,7 @@ import {
   type ScanStatus,
 } from "../lib/api";
 
-export type ThreatLevel = "idle" | "scanning" | "clean" | "threat";
+export type ThreatLevel = "idle" | "cloning" | "scanning" | "threat";
 export type AppPhase = "splash" | "landing" | "command";
 
 export interface ToastState {
@@ -24,6 +25,7 @@ interface ScanContextValue {
   repoPath: string;
   setRepoPath: (p: string) => void;
   scanning: boolean;
+  cloning: boolean;
   scanResult: ScanResult | null;
   feed: ScanStatus["feed"];
   feedStatus: string;
@@ -40,16 +42,33 @@ const ScanContext = createContext<ScanContextValue | null>(null);
 
 function computeThreatLevel(
   scanning: boolean,
-  scanResult: ScanResult | null,
-  feedStatus: string
+  feedStatus: string,
+  feed: ScanStatus["feed"],
+  scanResult: ScanResult | null
 ): ThreatLevel {
-  if (scanning) return "scanning";
-  if (!scanResult) return "idle";
-  const threats =
-    (scanResult.findings?.length || 0) + (scanResult.sbom_risks?.length || 0);
-  if (threats > 0) return "threat";
-  if (feedStatus === "complete") return "clean";
+  if (feedStatus === "cloning" || feed.some((f) => f.stage === "cloning")) return "cloning";
+  if (scanning || ["scanning", "sbom", "codebreaker", "autopsy", "queued"].includes(feedStatus)) {
+    return "scanning";
+  }
+  if (scanResult) {
+    const threats =
+      (scanResult.findings?.length || 0) + (scanResult.sbom_risks?.length || 0);
+    if (threats > 0) return "threat";
+  }
   return "idle";
+}
+
+function githubErrorMessage(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes("not found")) return "GitHub repo not found — check the URL.";
+  if (lower.includes("private") || lower.includes("authentication")) {
+    return "Cannot clone — repository is private or requires authentication.";
+  }
+  if (lower.includes("invalid") && lower.includes("github")) {
+    return "Invalid GitHub URL format.";
+  }
+  if (lower.includes("git is not installed")) return "Server error: Git is not installed.";
+  return raw;
 }
 
 export function ScanProvider({ children }: { children: ReactNode }) {
@@ -64,6 +83,8 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const [resilience, setResilience] = useState<ResilienceMetrics | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const prevFeedLen = useRef(0);
+
+  const cloning = feedStatus === "cloning" || feed.some((f) => f.stage === "cloning");
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -108,6 +129,11 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       prevFeedLen.current = 0;
       setActivePage("war-room");
 
+      const isRemote = target.toLowerCase().startsWith("http");
+      if (isRemote) {
+        setFeedStatus("cloning");
+      }
+
       try {
         const { scan_id } = await api.startScan(target);
         const stop = pollScan(scan_id, (status) => {
@@ -121,19 +147,26 @@ export function ScanProvider({ children }: { children: ReactNode }) {
               setToast({ message: "Verification complete — threat profile refined", variant: "success" });
             }
           }
-          if (status.status === "error") setScanning(false);
+          if (status.status === "error") {
+            setScanning(false);
+            const last = status.feed[status.feed.length - 1];
+            const errMsg = last?.message || "Scan failed";
+            setToast({ message: githubErrorMessage(errMsg.replace(/^Error:\s*/i, "")), variant: "warning" });
+          }
         });
         setTimeout(() => stop(), 300000);
       } catch (err) {
-        setFeed([{ timestamp: new Date().toISOString(), message: String(err), stage: "error" }]);
+        const msg = githubErrorMessage(parseScanError(err));
+        setFeed([{ timestamp: new Date().toISOString(), message: msg, stage: "error" }]);
         setFeedStatus("error");
         setScanning(false);
+        setToast({ message: msg, variant: "warning" });
       }
     },
     [repoPath, refreshMetrics]
   );
 
-  const threatLevel = computeThreatLevel(scanning, scanResult, feedStatus);
+  const threatLevel = computeThreatLevel(scanning, feedStatus, feed, scanResult);
 
   return (
     <ScanContext.Provider
@@ -145,6 +178,7 @@ export function ScanProvider({ children }: { children: ReactNode }) {
         repoPath,
         setRepoPath,
         scanning,
+        cloning,
         scanResult,
         feed,
         feedStatus,

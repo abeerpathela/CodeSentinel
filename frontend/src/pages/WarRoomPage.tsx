@@ -1,9 +1,10 @@
 import { motion } from "framer-motion";
-import AutopsyFeed from "../components/AutopsyFeed";
+import AgentTerminal from "../components/AgentTerminal";
 import ResilienceCounter from "../components/ResilienceCounter";
 import ScanEngine from "../components/ScanEngine";
 import SentinelOrb from "../components/SentinelOrb";
 import ThreatHeatmap from "../components/ThreatHeatmap";
+import ThreatMatrix from "../components/ThreatMatrix";
 import { useScan } from "../contexts/ScanContext";
 import { pageVariants, staggerContainer, staggerItem } from "../lib/animations";
 
@@ -12,6 +13,7 @@ export default function WarRoomPage() {
     repoPath,
     setRepoPath,
     scanning,
+    cloning,
     scanResult,
     feed,
     feedStatus,
@@ -20,10 +22,16 @@ export default function WarRoomPage() {
     handleScan,
   } = useScan();
 
-  const warRoom = threatLevel === "threat" || scanning;
+  const warRoom = threatLevel === "threat" || scanning || cloning;
 
   return (
     <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Triage Center</h2>
+        <p className="text-sm text-cyber-muted">
+          Real-time agent reasoning, threat matrix, and 3D status telemetry.
+        </p>
+      </div>
       <motion.div variants={staggerContainer} initial="initial" animate="animate" className="grid gap-6 xl:grid-cols-3">
         <motion.div variants={staggerItem} className="xl:col-span-2 space-y-6">
           <div className="glass-panel overflow-hidden p-1">
@@ -34,25 +42,30 @@ export default function WarRoomPage() {
             onChange={setRepoPath}
             onScan={() => handleScan()}
             scanning={scanning}
+            cloning={cloning}
           />
-          <ThreatHeatmap
-            findings={scanResult?.findings || []}
-            sbomRisks={scanResult?.sbom_risks}
-            warRoom={warRoom}
-          />
-        </motion.div>
-        <motion.div variants={staggerItem}>
-          {resilience && <ResilienceCounter score={resilience.resilience_score} warRoom={warRoom} />}
-          <div className="mt-6 min-h-[480px]">
-            <AutopsyFeed
-              feed={feed}
-              status={feedStatus}
-              selfCorrection={
-                scanResult?.self_correction_triggered ||
-                feed.some((f) => f.message.toLowerCase().includes("corrected"))
-              }
+          <div className="grid gap-6 md:grid-cols-2">
+            <ThreatMatrix
+              findings={scanResult?.findings || []}
+              sbomRisks={scanResult?.sbom_risks}
+            />
+            <ThreatHeatmap
+              findings={scanResult?.findings || []}
+              sbomRisks={scanResult?.sbom_risks}
+              warRoom={warRoom}
             />
           </div>
+        </motion.div>
+        <motion.div variants={staggerItem} className="space-y-6">
+          {resilience && <ResilienceCounter score={resilience.resilience_score} warRoom={warRoom} />}
+          <AgentTerminal
+            feed={feed}
+            status={feedStatus}
+            selfCorrection={
+              scanResult?.self_correction_triggered ||
+              feed.some((f) => f.message.toLowerCase().includes("corrected"))
+            }
+          />
         </motion.div>
       </motion.div>
     </motion.div>

@@ -17,7 +17,7 @@ import SupplyChainPage from "../pages/SupplyChainPage";
 import WarRoomPage from "../pages/WarRoomPage";
 
 const NAV = [
-  { id: "war-room", label: "Threat War-Room", icon: Swords },
+  { id: "war-room", label: "Triage Center", icon: Swords },
   { id: "supply-chain", label: "Supply Chain Map", icon: Network },
   { id: "security-lab", label: "Security Lab", icon: FlaskConical },
   { id: "reports", label: "Report Archive", icon: Archive },
