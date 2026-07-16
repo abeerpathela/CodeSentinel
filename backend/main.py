@@ -24,14 +24,22 @@ from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
-from core.github_repo import GitHubCloneError, GitHubManager
+from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+TEMP_SCANS_ROOT = PROJECT_ROOT / "backend" / "data" / "temp_scans"
 
 app = FastAPI(
     title="CodeSentinel",
     description="Cyber-AI agent mesh backend",
     version="0.4.0",
 )
+
+
+@app.on_event("startup")
+def _ensure_temp_scans_dir() -> None:
+    GitHubHandler.ensure_temp_root(PROJECT_ROOT)
 
 app.add_middleware(
     CORSMiddleware,
@@ -131,40 +139,54 @@ def switchboard_invoke(body: PromptRequest) -> PromptResponse:
     return PromptResponse(provider=provider.value, response=text)
 
 
+def _push_feed(scan_id: str | None, message: str, *, stage: str) -> None:
+    if scan_id:
+        scan_status_store.push(scan_id, message, stage=stage)
+
+
 def _resolve_scan_target(
     repo_input: str,
     *,
     scan_id: str | None = None,
 ) -> tuple[str, Path | None]:
     """
-    Resolve local path or GitHub URL to a scannable directory.
+    Remote Source Resolver: GitHub URL → shallow clone, else local path.
     Returns (scan_path, temp_clone_path) — temp path must be cleaned up after scan.
     """
     stripped = repo_input.strip()
-    if stripped.lower().startswith(("http://", "https://")):
-        if not GitHubManager.is_github_url(stripped):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid repository URL. Only public GitHub URLs are supported.",
-            )
-        manager = GitHubManager()
+
+    if GitHubHandler.is_github_url(stripped):
+        _push_feed(
+            scan_id,
+            f"🛰️ Detecting Source: {stripped}",
+            stage="cloning",
+        )
+        _push_feed(
+            scan_id,
+            "📥 Cloning Repository: Depth 1 clone started...",
+            stage="cloning",
+        )
+        handler = GitHubHandler(PROJECT_ROOT)
         try:
-            if scan_id:
-                scan_status_store.push(
-                    scan_id,
-                    f"Cloning {stripped} (depth=1)…",
-                    stage="cloning",
-                )
-            cloned = manager.clone(stripped)
-            if scan_id:
-                scan_status_store.push(
-                    scan_id,
-                    f"Clone complete: {cloned.name}",
-                    stage="scanning",
-                )
-            return str(cloned), cloned
+            cloned = handler.clone_repository(stripped)
         except GitHubCloneError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=422,
+                detail=str(exc),
+            ) from exc
+
+        _push_feed(
+            scan_id,
+            "✅ Ingestion Complete: Passing source to Codebreaker...",
+            stage="scanning",
+        )
+        return str(cloned), cloned
+
+    if stripped.lower().startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid repository URL. Only https://github.com/owner/repo URLs are supported.",
+        )
 
     local = Path(stripped)
     if not local.is_dir():
@@ -173,6 +195,17 @@ def _resolve_scan_target(
             detail=f"Repository path does not exist: {stripped}",
         )
     return str(local.resolve()), None
+
+
+def _cleanup_clone(cloned_path: Path | None, scan_id: str | None = None) -> None:
+    if not cloned_path:
+        return
+    _push_feed(
+        scan_id,
+        "🧹 Cleanup Started: Purging temporary workspace...",
+        stage="complete",
+    )
+    GitHubHandler.cleanup(cloned_path)
 
 
 def _finalize_scan_result(result: dict) -> dict:
@@ -201,19 +234,12 @@ def _execute_scan(repo_input: str, scan_id: str) -> None:
     except Exception as exc:
         scan_status_store.fail(scan_id, str(exc))
     finally:
-        if cloned_path:
-            GitHubManager.cleanup(cloned_path)
-            entry = scan_status_store.get(scan_id)
-            if entry and entry.get("status") != "error":
-                scan_status_store.push(
-                    scan_id, "Temporary clone cleaned up.", stage="complete"
-                )
+        _cleanup_clone(cloned_path, scan_id)
 
 
-@app.post("/codebreaker/scan")
-def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
+def _run_scan(body: ScanRequest) -> ScanResponse | ScanStartResponse:
     stripped = body.repo_path.strip()
-    is_remote = stripped.lower().startswith(("http://", "https://"))
+    is_remote = GitHubHandler.is_github_url(stripped)
 
     if not is_remote:
         local = Path(stripped)
@@ -254,10 +280,20 @@ def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
-        if cloned_path:
-            GitHubManager.cleanup(cloned_path)
+        _cleanup_clone(cloned_path)
 
     return ScanResponse(**result)
+
+
+@app.post("/codebreaker/scan")
+def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
+    return _run_scan(body)
+
+
+@app.post("/scan")
+def scan(body: ScanRequest, background_tasks: BackgroundTasks):
+    """Alias for remote/local repository scanning."""
+    return _run_scan(body)
 
 
 @app.get("/scan/{scan_id}/status")
