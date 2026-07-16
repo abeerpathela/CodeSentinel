@@ -51,7 +51,7 @@ export default function SplashScreen({ onComplete }: Props) {
         <p className="mt-4 font-mono text-sm text-cyber-muted">{STEPS[stepIdx]}</p>
         <div className="mt-8 h-1.5 overflow-hidden rounded-full bg-cyber-border">
           <motion.div
-            className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400"
+            className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-orange-400"
             style={{ width: `${progress}%` }}
             layout
           />

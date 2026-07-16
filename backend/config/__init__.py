@@ -1,3 +1,3 @@
-from backend.config.llm_config import LLMConfig, LLMProvider
+from backend.config.settings import Settings, get_settings
 
-__all__ = ["LLMConfig", "LLMProvider"]
+__all__ = ["LLMConfig", "LLMProvider", "Settings", "get_settings"]

@@ -16,9 +16,9 @@ interface Props {
 const STAGE_COLORS: Record<string, string> = {
   cloning: "text-yellow-400",
   scanning: "text-cyber-accent",
-  sbom: "text-purple-400",
+  sbom: "text-orange-400",
   codebreaker: "text-amber-400",
-  autopsy: "text-cyan-300",
+  autopsy: "text-emerald-300",
   complete: "text-cyber-safe",
   error: "text-cyber-danger",
   queued: "text-cyber-muted",
@@ -87,7 +87,7 @@ export default function AgentTerminal({ feed, status, selfCorrection = false }: 
                   key={`${entry.timestamp}-${i}`}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  className="border-l-2 border-cyan-500/30 pl-3"
+                  className="border-l-2 border-emerald-500/30 pl-3"
                 >
                   <span className="text-cyber-muted">
                     {new Date(entry.timestamp).toLocaleTimeString()}{" "}

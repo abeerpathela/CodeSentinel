@@ -11,7 +11,7 @@ const LEVELS = [
   { key: "Critical", color: "bg-red-500", glow: "shadow-[0_0_12px_rgba(239,68,68,0.6)]" },
   { key: "High", color: "bg-orange-500", glow: "shadow-[0_0_10px_rgba(249,115,22,0.5)]" },
   { key: "Medium", color: "bg-amber-400", glow: "" },
-  { key: "Low", color: "bg-cyan-600", glow: "" },
+  { key: "Low", color: "bg-emerald-600", glow: "" },
 ];
 
 function norm(s: string) {

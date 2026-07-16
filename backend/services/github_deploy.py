@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import secrets
 import urllib.parse
 from collections.abc import Callable
@@ -11,8 +10,9 @@ from typing import Any
 
 import requests
 
-from backend.config.path_config import resolve_scan_path
+from backend.config.settings import Settings, get_settings
 from core.github_deploy import GitDeployError, deploy_fresh_source
+from core.workspace_manager import WorkspaceManager
 
 GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -33,16 +33,12 @@ class ScanWorkspaceGoneError(GitHubDeployError):
 
 
 class GitHubDeployService:
-    def __init__(self) -> None:
-        self.client_id = os.getenv("GITHUB_CLIENT_ID", "")
-        self.client_secret = os.getenv("GITHUB_CLIENT_SECRET", "")
-        self.redirect_uri = os.getenv(
-            "GITHUB_REDIRECT_URI", "http://127.0.0.1:8000/auth/callback"
-        )
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
 
     @property
     def configured(self) -> bool:
-        return bool(self.client_id and self.client_secret)
+        return bool(self._settings.github_client_id and self._settings.github_client_secret)
 
     def create_login_state(self) -> str:
         state = secrets.token_urlsafe(16)
@@ -57,8 +53,8 @@ class GitHubDeployService:
             raise GitHubDeployError("GitHub OAuth is not configured.")
         params = urllib.parse.urlencode(
             {
-                "client_id": self.client_id,
-                "redirect_uri": self.redirect_uri,
+                "client_id": self._settings.github_client_id,
+                "redirect_uri": self._settings.github_oauth_redirect_uri,
                 "scope": "repo",
                 "state": state,
             }
@@ -75,10 +71,10 @@ class GitHubDeployService:
             GITHUB_TOKEN_URL,
             headers={"Accept": "application/json"},
             data={
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
+                "client_id": self._settings.github_client_id,
+                "client_secret": self._settings.github_client_secret,
                 "code": code,
-                "redirect_uri": self.redirect_uri,
+                "redirect_uri": self._settings.github_oauth_redirect_uri,
             },
             timeout=30,
         )
@@ -101,7 +97,7 @@ class GitHubDeployService:
     @staticmethod
     def resolve_deploy_path(scan_id: str) -> Path:
         """Locate scan workspace by scan_id only."""
-        path = resolve_scan_path(scan_id)
+        path = WorkspaceManager.get_path(scan_id)
         if not path.exists() or not path.is_dir():
             raise ScanWorkspaceGoneError(
                 f"Session directory [{scan_id}] no longer exists or was cleaned up."
@@ -142,7 +138,14 @@ class GitHubDeployService:
         authed_url = clone_url.replace("https://", f"https://{token}@")
 
         try:
-            deploy_fresh_source(root, authed_url, on_progress=on_progress)
+            deploy_fresh_source(
+                root,
+                authed_url,
+                on_progress=on_progress,
+                git_user_name=self._settings.git_deploy_user_name,
+                git_user_email=self._settings.git_deploy_user_email,
+                commit_message=self._settings.git_deploy_commit_message,
+            )
         except GitDeployError as exc:
             raise GitHubDeployError(str(exc)) from exc
 

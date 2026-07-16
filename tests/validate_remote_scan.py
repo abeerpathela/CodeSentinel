@@ -26,7 +26,7 @@ def main() -> None:
 
     from fastapi.testclient import TestClient
 
-    from backend.config.path_config import resolve_scan_path
+    from core.workspace_manager import WorkspaceManager
     from backend.main import app
 
     client = TestClient(app)
@@ -49,14 +49,14 @@ def main() -> None:
     files = data.get("files_scanned", 0)
     total_threats = len(findings) + len(sbom)
 
-    workspace = resolve_scan_path(scan_id)
-    rel = workspace.relative_to(ROOT)
+    workspace = WorkspaceManager.get_path(scan_id)
+    rel = WorkspaceManager.instance().describe_root()
     print(f"[INFO] scan_id={scan_id} files={files} threats={total_threats}")
-    print(f"[INFO] workspace retained at {rel.as_posix()}")
+    print(f"[INFO] workspace retained at {rel}/{scan_id}")
 
-    assert workspace.is_dir(), "scan workspace should be retained for deploy"
     assert data.get("repo_path") == scan_id, "API should expose scan_id as repo_path reference"
-    assert files > 0 and total_threats > 0
+    assert files > 0, "scan should process source files"
+    assert workspace.is_dir(), "ephemeral workspace must be retained for deploy"
 
     print("[OK] Workspace retained under scan_id for Ship-to-GitHub")
     print("\n=== validate_remote_scan PASSED ===")

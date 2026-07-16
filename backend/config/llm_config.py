@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
+
+from backend.config.settings import Settings, get_settings
 
 
 class LLMProvider(str, Enum):
@@ -19,37 +20,45 @@ class LLMProvider(str, Enum):
 class LLMConfig:
     """Switchboard that routes requests to Groq or Gemini based on task profile."""
 
-    # llama-3.1-70b-versatile was decommissioned by Groq (Jan 2025).
-    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    # gemini-1.5-flash is retired on current API keys; 2.5-flash keeps free-tier quota.
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
 
-    MAX_RETRIES = 2  # MVP loop limit: 2 retry attempts maximum
+    @property
+    def GROQ_MODEL(self) -> str:
+        return self._settings.llm_model_groq
+
+    @property
+    def GEMINI_MODEL(self) -> str:
+        return self._settings.llm_model_gemini
+
+    @property
+    def MAX_RETRIES(self) -> int:
+        return self._settings.llm_max_retries
 
     def get_provider(self, *, large_context: bool = False) -> LLMProvider:
         """Select provider: Gemini for large code files, Groq for fast logic."""
         return LLMProvider.GEMINI if large_context else LLMProvider.GROQ
 
     def _build_groq(self) -> ChatGroq:
-        api_key = os.getenv("GROQ_API_KEY")
+        api_key = self._settings.groq_api_key
         if not api_key:
             raise ValueError("GROQ_API_KEY is not set")
         return ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=self._settings.llm_model_groq,
             api_key=api_key,
             temperature=0,
-            max_retries=self.MAX_RETRIES,
+            max_retries=self._settings.llm_max_retries,
         )
 
     def _build_gemini(self) -> ChatGoogleGenerativeAI:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = self._settings.gemini_api_key
         if not api_key:
             raise ValueError("GEMINI_API_KEY is not set")
         return ChatGoogleGenerativeAI(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            model=self._settings.llm_model_gemini,
             google_api_key=api_key,
             temperature=0,
-            max_retries=self.MAX_RETRIES,
+            max_retries=self._settings.llm_max_retries,
         )
 
     def get_llm(

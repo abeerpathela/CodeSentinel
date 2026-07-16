@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.config.llm_config import LLMConfig, _extract_content
+from backend.config.settings import get_settings
 
 # Simulated threat intelligence — known vulnerable versions
 VULNERABLE_PACKAGES: dict[str, str] = {
@@ -66,15 +67,16 @@ class SBOMParser:
 
     def parse_repo(self) -> list[Dependency]:
         deps: list[Dependency] = []
-        req = self.root / "requirements.txt"
-        pkg = self.root / "package.json"
-        gomod = self.root / "go.mod"
+        manifests = get_settings().sbom_manifest_files
+        req = self.root / "requirements.txt" if "requirements.txt" in manifests else None
+        pkg = self.root / "package.json" if "package.json" in manifests else None
+        gomod = self.root / "go.mod" if "go.mod" in manifests else None
 
-        if req.is_file():
+        if req and req.is_file():
             deps.extend(self._parse_requirements(req))
-        if pkg.is_file():
+        if pkg and pkg.is_file():
             deps.extend(self._parse_package_json(pkg))
-        if gomod.is_file():
+        if gomod and gomod.is_file():
             deps.extend(self._parse_go_mod(gomod))
         return deps
 

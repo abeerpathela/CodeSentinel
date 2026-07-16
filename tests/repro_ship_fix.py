@@ -12,27 +12,28 @@ TEST_ID = "test_id_123"
 
 
 def main() -> None:
-    from backend.config.path_config import resolve_scan_path
+    from core.workspace_manager import WorkspaceManager
     from backend.services.github_deploy import GitHubDeployService, ScanWorkspaceGoneError
     from backend.services.scan_session import register_workspace
     from core.github_handler import GitHubHandler
 
     handler = GitHubHandler()
-    dest = resolve_scan_path(TEST_ID)
+    dest = WorkspaceManager.get_path(TEST_ID)
     if dest.exists():
         handler.cleanup(dest)
     dest.mkdir(parents=True)
     (dest / "README.md").write_text("# mock clone for ship test\n", encoding="utf-8")
 
-    rel = dest.relative_to(ROOT)
-    print(f"[OK] Mock workspace created at {rel.as_posix()}")
+    wm = WorkspaceManager.instance()
+    rel = wm.describe_root()
+    print(f"[OK] Mock workspace created under {rel}/{TEST_ID}")
     assert dest.is_dir(), "workspace missing"
     register_workspace(TEST_ID)
 
     svc = GitHubDeployService()
     resolved = svc.resolve_deploy_path(TEST_ID)
-    rel_resolved = resolved.relative_to(ROOT)
-    print(f"[OK] resolve_deploy_path -> {rel_resolved.as_posix()}")
+    rel_resolved = WorkspaceManager.instance().describe_root()
+    print(f"[OK] resolve_deploy_path -> {rel_resolved}/{TEST_ID}")
 
     assert resolved == dest, "path mismatch between resolve_scan_path and deploy resolver"
 

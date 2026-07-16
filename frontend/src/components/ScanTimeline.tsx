@@ -40,7 +40,7 @@ export default function ScanTimeline({ events, currentStage }: Props) {
                   isDone
                     ? "border-emerald-500/60 bg-emerald-500/20 text-emerald-400"
                     : isActive
-                      ? "border-cyan-400/60 bg-cyan-500/20 text-cyan-300"
+                      ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-300"
                       : "border-cyber-border bg-cyber-bg text-cyber-muted"
                 }`}
               >
@@ -54,7 +54,7 @@ export default function ScanTimeline({ events, currentStage }: Props) {
               </span>
               <p
                 className={`text-xs font-semibold uppercase tracking-wide ${
-                  isDone ? "text-emerald-400" : isActive ? "text-cyan-300" : "text-cyber-muted"
+                  isDone ? "text-emerald-400" : isActive ? "text-emerald-300" : "text-cyber-muted"
                 }`}
               >
                 {stage.replace("_", " ")}

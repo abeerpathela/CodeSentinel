@@ -21,7 +21,7 @@ export default function LandingPage() {
           <p className="font-mono text-xs uppercase tracking-[0.4em] text-cyber-accent">
             Enterprise Security Suite
           </p>
-          <h1 className="bg-gradient-to-br from-cyan-200 via-white to-slate-400 bg-clip-text text-5xl font-bold leading-tight text-transparent">
+          <h1 className="bg-gradient-to-br from-emerald-200 via-white to-slate-400 bg-clip-text text-5xl font-bold leading-tight text-transparent">
             Sentinel Command Center
           </h1>
           <p className="max-w-lg text-lg text-cyber-muted">

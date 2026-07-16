@@ -48,7 +48,7 @@ export default function MainShell() {
               onClick={() => setActivePage(id)}
               className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition ${
                 activePage === id
-                  ? "bg-cyan-500/15 text-cyan-300 shadow-glow"
+                  ? "bg-emerald-500/15 text-emerald-300 shadow-glow"
                   : "text-cyber-muted hover:bg-white/5 hover:text-cyber-text"
               }`}
             >
@@ -62,7 +62,7 @@ export default function MainShell() {
           {resilience && (
             <div className="rounded-xl bg-black/20 px-3 py-2 text-xs">
               <p className="text-cyber-muted">Resilience</p>
-              <p className="font-mono text-lg font-bold text-cyan-400">{resilience.resilience_score}%</p>
+              <p className="font-mono text-lg font-bold text-emerald-400">{resilience.resilience_score}%</p>
             </div>
           )}
           {summary && (

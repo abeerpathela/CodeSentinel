@@ -51,10 +51,10 @@ export default function SecurityLabPage() {
               <motion.div
                 key={fx.id}
                 variants={staggerItem}
-                className="glass-panel flex flex-col p-6 transition hover:border-cyan-500/40"
+                className="glass-panel flex flex-col p-6 transition hover:border-emerald-500/40"
               >
                 <div className="mb-4 flex items-center gap-3">
-                  <div className="rounded-lg bg-cyan-500/10 p-2">
+                  <div className="rounded-lg bg-emerald-500/10 p-2">
                     <Icon className="h-5 w-5 text-cyber-accent" />
                   </div>
                   <div>

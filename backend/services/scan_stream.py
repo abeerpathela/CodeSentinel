@@ -9,7 +9,7 @@ from typing import Any
 
 from agents.mesh import run_mesh_scan
 from backend.config.llm_config import LLMConfig
-from backend.config.path_config import resolve_scan_path
+from core.workspace_manager import WorkspaceManager
 from backend.services.progress_stream import ProgressTracker
 from backend.services.scan_session import register_workspace
 from core.github_handler import GitHubCloneError, GitHubHandler
@@ -21,7 +21,7 @@ IGNORE = shutil.ignore_patterns(
 
 
 def _stage_local_workspace(scan_id: str, local: Path) -> Path:
-    dest = resolve_scan_path(scan_id)
+    dest = WorkspaceManager.get_path(scan_id)
     if dest.exists():
         GitHubHandler.cleanup(dest)
     shutil.copytree(local, dest, ignore=IGNORE, dirs_exist_ok=False)
@@ -70,7 +70,7 @@ def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any
             yield tracker.complete_stage("CLONING", "Local source staged to scan workspace.")
             workspace_retained = True
 
-        scan_path = str(resolve_scan_path(scan_id))
+        scan_path = str(WorkspaceManager.get_path(scan_id))
 
         from backend.scan_status import scan_status_store
 

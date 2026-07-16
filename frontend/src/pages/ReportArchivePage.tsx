@@ -68,7 +68,7 @@ export default function ReportArchivePage() {
                 </div>
                 <a
                   href={`${API_BASE}/analytics/export?scan_id=${scan.scan_id}`}
-                  className="inline-flex items-center gap-2 rounded-lg border border-cyber-border px-4 py-2 text-sm text-cyber-accent hover:bg-cyan-500/10"
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/5 px-4 py-2 text-sm text-cyber-accent hover:bg-emerald-500/10"
                   target="_blank"
                   rel="noreferrer"
                 >

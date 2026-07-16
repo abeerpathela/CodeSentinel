@@ -7,7 +7,7 @@ export default function ResilienceCounter({ score, warRoom = false }: Props) {
   return (
     <div
       className={`cyber-panel flex flex-col items-center justify-center px-8 py-6 text-center ${
-        warRoom ? "animate-pulse border-cyan-400/50 shadow-glow" : ""
+        warRoom ? "animate-pulse border-emerald-400/50 shadow-glow" : ""
       }`}
     >
       <p className="text-xs uppercase tracking-[0.25em] text-cyber-muted">

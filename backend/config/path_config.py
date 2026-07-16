@@ -1,26 +1,28 @@
-"""Central path configuration for CodeSentinel backend."""
+"""Backward-compatible path helpers — delegates to WorkspaceManager."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-_CONFIG_DIR = Path(__file__).resolve().parent
-_BACKEND_ROOT = _CONFIG_DIR.parent
-PROJECT_ROOT = _BACKEND_ROOT.parent
-
-# backend/data/temp_scans — unified workspace root for cloned/staged scans
-TEMP_SCAN_ROOT = _BACKEND_ROOT / "data" / "temp_scans"
-
-# Retain workspaces for Ship-to-GitHub (seconds)
-SCAN_WORKSPACE_TTL_SECONDS = int(os.getenv("SCAN_WORKSPACE_TTL_SECONDS", "3600"))
+from backend.config.settings import PROJECT_ROOT, get_settings
+from core.workspace_manager import WorkspaceManager
 
 
 def ensure_temp_scan_root() -> Path:
-    TEMP_SCAN_ROOT.mkdir(parents=True, exist_ok=True)
-    return TEMP_SCAN_ROOT
+    return WorkspaceManager.instance().ensure_root()
 
 
 def resolve_scan_path(scan_id: str) -> Path:
-    """Reconstruct scan workspace path from scan_id at runtime."""
-    return TEMP_SCAN_ROOT / scan_id
+    return WorkspaceManager.get_path(scan_id)
+
+
+SCAN_WORKSPACE_TTL_SECONDS = get_settings().scan_workspace_ttl_seconds
+TEMP_SCAN_ROOT = WorkspaceManager.instance().root
+
+__all__ = [
+    "PROJECT_ROOT",
+    "SCAN_WORKSPACE_TTL_SECONDS",
+    "TEMP_SCAN_ROOT",
+    "ensure_temp_scan_root",
+    "resolve_scan_path",
+]

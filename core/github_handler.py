@@ -9,7 +9,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-from backend.config.path_config import ensure_temp_scan_root, resolve_scan_path
+from core.workspace_manager import WorkspaceManager
 
 
 class GitHubCloneError(Exception):
@@ -34,11 +34,11 @@ class GitHubHandler:
     """Transparently clone public GitHub repos into isolated temp scan workspaces."""
 
     def __init__(self) -> None:
-        self.temp_root = ensure_temp_scan_root()
+        self.temp_root = WorkspaceManager.instance().ensure_root()
 
     @classmethod
     def ensure_temp_root(cls) -> Path:
-        return ensure_temp_scan_root()
+        return WorkspaceManager.instance().ensure_root()
 
     @staticmethod
     def is_github_url(input_string: str) -> bool:
@@ -59,7 +59,7 @@ class GitHubHandler:
     def clone_repository(self, url: str, scan_id: str) -> Path:
         """Shallow-clone into TEMP_SCAN_ROOT/[scan_id] — folder name equals scan_id."""
         clone_url = self.normalize_url(url)
-        dest = resolve_scan_path(scan_id)
+        dest = WorkspaceManager.get_path(scan_id)
         if dest.exists():
             self.cleanup(dest)
         dest.mkdir(parents=True, exist_ok=False)

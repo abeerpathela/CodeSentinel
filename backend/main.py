@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-except ImportError:
-    pass
-
+import logging
 import threading
-import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,39 +15,40 @@ from pydantic import BaseModel, Field
 from agents.mesh import run_mesh_scan
 from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
-from backend.config.path_config import ensure_temp_scan_root, resolve_scan_path
 from backend.config.llm_config import LLMConfig, LLMProvider
+from backend.config.settings import PROJECT_ROOT, get_settings
 from backend.scan_status import scan_status_store
 from backend.services.github_deploy import GitHubDeployError, GitHubDeployService, ScanWorkspaceGoneError
 from backend.services.progress_stream import ProgressTracker
 from backend.services.scan_session import register_workspace, release_workspace, sweep_expired_workspaces
 from backend.services.scan_stream import _stage_local_workspace, iter_scan
+from backend.services.workspace_gc import start_workspace_gc
 from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
+from core.workspace_manager import WorkspaceManager
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+settings = get_settings()
+_log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+if settings.is_production:
+    _log_level = max(_log_level, logging.WARNING)
+logging.basicConfig(level=_log_level)
 
 app = FastAPI(
     title="CodeSentinel",
     description="Cyber-AI agent mesh backend",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 
 @app.on_event("startup")
-def _ensure_temp_scans_dir() -> None:
-    ensure_temp_scan_root()
+async def _startup() -> None:
+    WorkspaceManager.instance().ensure_root()
     sweep_expired_workspaces()
+    start_workspace_gc()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -179,7 +172,7 @@ def _resolve_scan_target(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         _push_feed(scan_id, "✅ Ingestion Complete: Passing source to Codebreaker...", stage="scanning")
         register_workspace(scan_id)
-        return str(resolve_scan_path(scan_id))
+        return str(WorkspaceManager.get_path(scan_id))
 
     if stripped.lower().startswith(("http://", "https://")):
         raise HTTPException(
@@ -193,7 +186,7 @@ def _resolve_scan_target(
 
     _stage_local_workspace(scan_id, local.resolve())
     register_workspace(scan_id)
-    return str(resolve_scan_path(scan_id))
+    return str(WorkspaceManager.get_path(scan_id))
 
 
 def _finalize_scan_result(result: dict) -> dict:
@@ -417,7 +410,7 @@ def auth_callback(code: str, state: str) -> RedirectResponse:
     try:
         session_id = deploy_service.exchange_code(code, state)
         return RedirectResponse(
-            f"{FRONTEND_URL}/?github_session={session_id}",
+            f"{settings.frontend_url.rstrip('/')}/?github_session={session_id}",
             status_code=302,
         )
     except GitHubDeployError as exc:

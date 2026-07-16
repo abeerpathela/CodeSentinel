@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 import stat
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-GIT_USER_NAME = "CodeSentinel-Bot"
-GIT_USER_EMAIL = "sentinel@codesentinel.local"
-COMMIT_MESSAGE = "CodeSentinel Security Audit: Clean Snapshot"
+from backend.config.settings import get_settings
+
+_settings = get_settings()
+GIT_USER_NAME = _settings.git_deploy_user_name
+GIT_USER_EMAIL = _settings.git_deploy_user_email
+COMMIT_MESSAGE = _settings.git_deploy_commit_message
 
 
 class GitDeployError(Exception):
@@ -59,6 +61,9 @@ def prepare_fresh_repository(
     workspace: Path,
     *,
     on_progress: ProgressCallback | None = None,
+    git_user_name: str | None = None,
+    git_user_email: str | None = None,
+    commit_message: str | None = None,
 ) -> None:
     """
     Scrub old metadata, init a new repo, commit all files on main.
@@ -69,19 +74,23 @@ def prepare_fresh_repository(
     if not workspace.is_dir():
         raise GitDeployError(f"Workspace is not a directory: {workspace.name}")
 
-    def notify(message: str) -> None:
+    user_name = git_user_name or GIT_USER_NAME
+    user_email = git_user_email or GIT_USER_EMAIL
+    message = commit_message or COMMIT_MESSAGE
+
+    def notify(msg: str) -> None:
         if on_progress:
-            on_progress(message)
+            on_progress(msg)
 
     notify("🧹 Scrubbing Metadata: Removing source Git history...")
     purge_git_metadata(workspace)
 
     notify("🔨 Initializing: Creating fresh audit repository...")
     _run_git(["init"], workspace)
-    _run_git(["config", "user.name", GIT_USER_NAME], workspace)
-    _run_git(["config", "user.email", GIT_USER_EMAIL], workspace)
+    _run_git(["config", "user.name", user_name], workspace)
+    _run_git(["config", "user.email", user_email], workspace)
     _run_git(["add", "."], workspace)
-    _run_git(["commit", "-m", COMMIT_MESSAGE], workspace)
+    _run_git(["commit", "-m", message], workspace)
     _run_git(["branch", "-M", "main"], workspace)
 
 
@@ -113,7 +122,16 @@ def deploy_fresh_source(
     origin_url: str,
     *,
     on_progress: ProgressCallback | None = None,
+    git_user_name: str | None = None,
+    git_user_email: str | None = None,
+    commit_message: str | None = None,
 ) -> None:
     """Full fresh-source chain: scrub → init → commit → push."""
-    prepare_fresh_repository(workspace, on_progress=on_progress)
+    prepare_fresh_repository(
+        workspace,
+        on_progress=on_progress,
+        git_user_name=git_user_name,
+        git_user_email=git_user_email,
+        commit_message=commit_message,
+    )
     push_fresh_to_origin(workspace, origin_url, on_progress=on_progress)
