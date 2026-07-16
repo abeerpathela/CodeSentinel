@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import os
 import secrets
-import subprocess
 import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import requests
 
 from backend.config.path_config import resolve_scan_path
+from core.github_deploy import GitDeployError, deploy_fresh_source
 
 GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -19,6 +20,8 @@ GITHUB_API = "https://api.github.com"
 
 _oauth_states: dict[str, str] = {}
 _token_sessions: dict[str, str] = {}
+
+ProgressCallback = Callable[[str], None]
 
 
 class GitHubDeployError(Exception):
@@ -112,8 +115,9 @@ class GitHubDeployService:
         scan_id: str,
         *,
         description: str = "CodeSentinel secured deployment",
+        on_progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """Create a new private repo and push scanned files from scan_id workspace."""
+        """Create a new private repo and push a fresh-source snapshot from scan_id workspace."""
         root = self.resolve_deploy_path(scan_id)
 
         headers = {
@@ -128,43 +132,18 @@ class GitHubDeployService:
         )
         if create_resp.status_code not in (200, 201):
             raise GitHubDeployError(
-                f"Failed to create repository: {create_resp.text[:200]}"
+                f"Failed to create repository: {create_resp.text[:500]}"
             )
 
         repo_data = create_resp.json()
         clone_url = repo_data.get("clone_url", "")
         html_url = repo_data.get("html_url", "")
 
-        work = root
-        subprocess.run(["git", "init"], cwd=work, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "sentinel@codesentinel.local"], cwd=work, check=True)
-        subprocess.run(["git", "config", "user.name", "CodeSentinel"], cwd=work, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=work, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "CodeSentinel secured deployment"],
-            cwd=work,
-            check=False,
-            capture_output=True,
-        )
-
         authed_url = clone_url.replace("https://", f"https://{token}@")
-        subprocess.run(["git", "branch", "-M", "main"], cwd=work, check=True, capture_output=True)
-        push = subprocess.run(
-            ["git", "remote", "add", "origin", authed_url],
-            cwd=work,
-            check=False,
-            capture_output=True,
-        )
-        if push.returncode != 0:
-            subprocess.run(["git", "remote", "set-url", "origin", authed_url], cwd=work, check=True)
-        push_result = subprocess.run(
-            ["git", "push", "-u", "origin", "main"],
-            cwd=work,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if push_result.returncode != 0:
-            raise GitHubDeployError(f"Git push failed: {push_result.stderr[:200]}")
+
+        try:
+            deploy_fresh_source(root, authed_url, on_progress=on_progress)
+        except GitDeployError as exc:
+            raise GitHubDeployError(str(exc)) from exc
 
         return {"repo_url": html_url, "clone_url": clone_url, "name": repo_name, "scan_id": scan_id}

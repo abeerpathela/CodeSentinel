@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import stat
@@ -63,6 +64,10 @@ class GitHubHandler:
             self.cleanup(dest)
         dest.mkdir(parents=True, exist_ok=False)
 
+        clone_env = os.environ.copy()
+        # Avoid optional lock files that can block later .git removal on Windows.
+        clone_env["GIT_OPTIONAL_LOCKS"] = "0"
+
         try:
             proc = subprocess.run(
                 ["git", "clone", "--depth", "1", clone_url, str(dest)],
@@ -70,6 +75,7 @@ class GitHubHandler:
                 text=True,
                 timeout=120,
                 check=False,
+                env=clone_env,
             )
         except FileNotFoundError as exc:
             self.cleanup(dest)
@@ -85,11 +91,27 @@ class GitHubHandler:
             self.cleanup(dest)
             raise GitHubCloneError()
 
+        self.release_git_locks(dest)
         return dest.resolve()
 
     def clone(self, url: str, scan_id: str) -> Path:
         """Alias for clone_repository (backward compatibility)."""
         return self.clone_repository(url, scan_id)
+
+    @staticmethod
+    def release_git_locks(path: Path | str) -> None:
+        """Clear read-only bits on .git so deploy can shutil.rmtree('.git') later."""
+        root = Path(path)
+        git_dir = root / ".git"
+        if not git_dir.exists():
+            return
+        for dirpath, _dirnames, filenames in os.walk(git_dir):
+            for name in filenames:
+                target = Path(dirpath) / name
+                try:
+                    target.chmod(stat.S_IWRITE | stat.S_IREAD)
+                except OSError:
+                    pass
 
     @staticmethod
     def cleanup(path: Path | str) -> None:

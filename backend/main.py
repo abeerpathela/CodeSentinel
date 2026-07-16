@@ -443,7 +443,11 @@ def deploy_ship(
     try:
         token = deploy_service.get_token(x_github_session)
         result = deploy_service.push_to_private_repo(
-            token, body.repo_name, body.scan_id, description=body.description
+            token,
+            body.repo_name,
+            body.scan_id,
+            description=body.description,
+            on_progress=lambda msg: _push_feed(body.scan_id, msg, stage="deploying"),
         )
         release_workspace(body.scan_id)
         return result
