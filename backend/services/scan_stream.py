@@ -2,25 +2,39 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
 
 from agents.mesh import run_mesh_scan
 from backend.config.llm_config import LLMConfig
+from backend.config.path_config import resolve_scan_path
 from backend.services.progress_stream import ProgressTracker
+from backend.services.scan_session import register_workspace
 from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+IGNORE = shutil.ignore_patterns(
+    ".git", "__pycache__", ".venv", "venv", "node_modules", ".chroma"
+)
+
+
+def _stage_local_workspace(scan_id: str, local: Path) -> Path:
+    dest = resolve_scan_path(scan_id)
+    if dest.exists():
+        GitHubHandler.cleanup(dest)
+    shutil.copytree(local, dest, ignore=IGNORE, dirs_exist_ok=False)
+    return dest.resolve()
 
 
 def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any], None, None]:
-    """Yield progress events through clone → parse → SBOM → Codebreaker → Autopsy → cleanup."""
+    """Yield progress events through clone → parse → SBOM → Codebreaker → Autopsy → retention."""
     tracker = ProgressTracker()
-    cloned_path: Path | None = None
+    scan_id = tracker.scan_id
     stripped = repo_input.strip()
     mesh_events: list[dict[str, Any]] = []
+    workspace_retained = False
 
     def capture(stage: str, message: str, status: str = "active") -> None:
         evt = tracker.event(stage, message, status=status)  # type: ignore[arg-type]
@@ -36,14 +50,14 @@ def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any
         if GitHubHandler.is_github_url(stripped):
             yield emit("CLONING", f"🛰️ Detecting Source: {stripped}")
             yield emit("CLONING", "📥 Cloning Repository: Depth 1 clone started...")
-            handler = GitHubHandler(PROJECT_ROOT)
+            handler = GitHubHandler()
             try:
-                cloned_path = handler.clone_repository(stripped)
+                handler.clone_repository(stripped, scan_id)
             except GitHubCloneError as exc:
                 yield emit("CLONING", str(exc), status="error")
                 return
             yield tracker.complete_stage("CLONING", "✅ Ingestion Complete: Repository cloned.")
-            scan_path = str(cloned_path)
+            workspace_retained = True
         elif stripped.lower().startswith(("http://", "https://")):
             yield emit("CLONING", "Invalid GitHub URL.", status="error")
             return
@@ -52,15 +66,18 @@ def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any
             if not local.is_dir():
                 yield emit("PARSING", f"Repository path does not exist: {stripped}", status="error")
                 return
-            scan_path = str(local.resolve())
-            yield tracker.complete_stage("CLONING", "Local source detected — skipping clone.")
+            _stage_local_workspace(scan_id, local.resolve())
+            yield tracker.complete_stage("CLONING", "Local source staged to scan workspace.")
+            workspace_retained = True
+
+        scan_path = str(resolve_scan_path(scan_id))
 
         from backend.scan_status import scan_status_store
 
         result = run_mesh_scan(
             scan_path,
             llm_config,
-            scan_id=tracker.scan_id,
+            scan_id=scan_id,
             status_store=scan_status_store,
             on_progress=capture,
         )
@@ -74,11 +91,13 @@ def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any
         except Exception:
             result["advisory_file"] = ""
 
-        if cloned_path:
-            yield emit("CLEANUP", "🧹 Cleanup Started: Purging temporary workspace...")
-            GitHubHandler.cleanup(cloned_path)
-            cloned_path = None
-            yield tracker.complete_stage("CLEANUP", "Temporary workspace purged.")
+        if workspace_retained:
+            register_workspace(scan_id)
+            yield emit(
+                "CLEANUP",
+                "Workspace retained for Ship-to-GitHub (1h TTL).",
+                status="done",
+            )
 
         threats = len(result.get("findings", [])) + len(result.get("sbom_risks", []))
         outcome = "breach" if threats > 0 else "secure"
@@ -93,6 +112,3 @@ def iter_scan(repo_input: str, llm_config: LLMConfig) -> Generator[dict[str, Any
 
     except Exception as exc:
         yield tracker.error("COMPLETE", str(exc))
-    finally:
-        if cloned_path:
-            GitHubHandler.cleanup(cloned_path)

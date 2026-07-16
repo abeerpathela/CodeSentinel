@@ -166,7 +166,7 @@ export const api = {
     }),
   shipToGithub: (
     session: string,
-    payload: { repo_name: string; local_path: string; description?: string }
+    payload: { scan_id: string; repo_name: string; description?: string }
   ) =>
     request<{ repo_url: string }>("/deploy/ship", {
       method: "POST",

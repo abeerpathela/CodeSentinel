@@ -166,7 +166,7 @@ class ReportEngine:
             "",
             f"**Scan ID:** `{scan_id}`  ",
             f"**Generated:** {ts}  ",
-            f"**Target:** `{scan_record.get('repo_path', 'unknown')}`  ",
+            f"**Target scan_id:** `{scan_record.get('scan_id', 'unknown')}`  ",
             f"**Classification:** CONFIDENTIAL",
             "",
             "## Executive Summary",

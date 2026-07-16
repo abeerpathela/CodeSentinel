@@ -6,8 +6,9 @@ import re
 import shutil
 import stat
 import subprocess
-import uuid
 from pathlib import Path
+
+from backend.config.path_config import ensure_temp_scan_root, resolve_scan_path
 
 
 class GitHubCloneError(Exception):
@@ -31,17 +32,12 @@ GITHUB_URL_RE = re.compile(
 class GitHubHandler:
     """Transparently clone public GitHub repos into isolated temp scan workspaces."""
 
-    def __init__(self, project_root: Path | None = None) -> None:
-        root = project_root or Path(__file__).resolve().parents[1]
-        self.temp_root = root / "backend" / "data" / "temp_scans"
-        self.ensure_temp_root()
+    def __init__(self) -> None:
+        self.temp_root = ensure_temp_scan_root()
 
     @classmethod
-    def ensure_temp_root(cls, project_root: Path | None = None) -> Path:
-        root = project_root or Path(__file__).resolve().parents[1]
-        temp_root = root / "backend" / "data" / "temp_scans"
-        temp_root.mkdir(parents=True, exist_ok=True)
-        return temp_root
+    def ensure_temp_root(cls) -> Path:
+        return ensure_temp_scan_root()
 
     @staticmethod
     def is_github_url(input_string: str) -> bool:
@@ -59,10 +55,12 @@ class GitHubHandler:
         assert match is not None
         return f"https://github.com/{match.group('owner')}/{match.group('repo')}.git"
 
-    def clone_repository(self, url: str) -> Path:
-        """Shallow-clone a public repository into backend/data/temp_scans/[uuid]."""
+    def clone_repository(self, url: str, scan_id: str) -> Path:
+        """Shallow-clone into TEMP_SCAN_ROOT/[scan_id] — folder name equals scan_id."""
         clone_url = self.normalize_url(url)
-        dest = self.temp_root / uuid.uuid4().hex
+        dest = resolve_scan_path(scan_id)
+        if dest.exists():
+            self.cleanup(dest)
         dest.mkdir(parents=True, exist_ok=False)
 
         try:
@@ -89,9 +87,9 @@ class GitHubHandler:
 
         return dest.resolve()
 
-    def clone(self, url: str) -> Path:
+    def clone(self, url: str, scan_id: str) -> Path:
         """Alias for clone_repository (backward compatibility)."""
-        return self.clone_repository(url)
+        return self.clone_repository(url, scan_id)
 
     @staticmethod
     def cleanup(path: Path | str) -> None:

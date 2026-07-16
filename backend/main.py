@@ -23,16 +23,17 @@ from pydantic import BaseModel, Field
 from agents.mesh import run_mesh_scan
 from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
+from backend.config.path_config import ensure_temp_scan_root, resolve_scan_path
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
-from backend.services.github_deploy import GitHubDeployError, GitHubDeployService
+from backend.services.github_deploy import GitHubDeployError, GitHubDeployService, ScanWorkspaceGoneError
 from backend.services.progress_stream import ProgressTracker
-from backend.services.scan_stream import iter_scan
+from backend.services.scan_session import register_workspace, release_workspace, sweep_expired_workspaces
+from backend.services.scan_stream import _stage_local_workspace, iter_scan
 from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TEMP_SCANS_ROOT = PROJECT_ROOT / "backend" / "data" / "temp_scans"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 
 app = FastAPI(
@@ -44,7 +45,8 @@ app = FastAPI(
 
 @app.on_event("startup")
 def _ensure_temp_scans_dir() -> None:
-    GitHubHandler.ensure_temp_root(PROJECT_ROOT)
+    ensure_temp_scan_root()
+    sweep_expired_workspaces()
 
 app.add_middleware(
     CORSMiddleware,
@@ -117,8 +119,8 @@ class ScanStartResponse(BaseModel):
 
 
 class DeployRequest(BaseModel):
+    scan_id: str = Field(..., min_length=1)
     repo_name: str = Field(..., min_length=1)
-    local_path: str = Field(..., min_length=1)
     description: str = "CodeSentinel secured deployment"
 
 
@@ -159,40 +161,25 @@ def _push_feed(scan_id: str | None, message: str, *, stage: str) -> None:
 def _resolve_scan_target(
     repo_input: str,
     *,
-    scan_id: str | None = None,
-) -> tuple[str, Path | None]:
+    scan_id: str,
+) -> str:
     """
-    Remote Source Resolver: GitHub URL → shallow clone, else local path.
-    Returns (scan_path, temp_clone_path) — temp path must be cleaned up after scan.
+    Stage repository into TEMP_SCAN_ROOT/[scan_id].
+    Returns scannable path (always resolve_scan_path(scan_id)).
     """
     stripped = repo_input.strip()
 
     if GitHubHandler.is_github_url(stripped):
-        _push_feed(
-            scan_id,
-            f"🛰️ Detecting Source: {stripped}",
-            stage="cloning",
-        )
-        _push_feed(
-            scan_id,
-            "📥 Cloning Repository: Depth 1 clone started...",
-            stage="cloning",
-        )
-        handler = GitHubHandler(PROJECT_ROOT)
+        _push_feed(scan_id, f"🛰️ Detecting Source: {stripped}", stage="cloning")
+        _push_feed(scan_id, "📥 Cloning Repository: Depth 1 clone started...", stage="cloning")
+        handler = GitHubHandler()
         try:
-            cloned = handler.clone_repository(stripped)
+            handler.clone_repository(stripped, scan_id)
         except GitHubCloneError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=str(exc),
-            ) from exc
-
-        _push_feed(
-            scan_id,
-            "✅ Ingestion Complete: Passing source to Codebreaker...",
-            stage="scanning",
-        )
-        return str(cloned), cloned
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _push_feed(scan_id, "✅ Ingestion Complete: Passing source to Codebreaker...", stage="scanning")
+        register_workspace(scan_id)
+        return str(resolve_scan_path(scan_id))
 
     if stripped.lower().startswith(("http://", "https://")):
         raise HTTPException(
@@ -202,22 +189,11 @@ def _resolve_scan_target(
 
     local = Path(stripped)
     if not local.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail=f"Repository path does not exist: {stripped}",
-        )
-    return str(local.resolve()), None
+        raise HTTPException(status_code=404, detail=f"Repository path does not exist: {stripped}")
 
-
-def _cleanup_clone(cloned_path: Path | None, scan_id: str | None = None) -> None:
-    if not cloned_path:
-        return
-    _push_feed(
-        scan_id,
-        "🧹 Cleanup Started: Purging temporary workspace...",
-        stage="complete",
-    )
-    GitHubHandler.cleanup(cloned_path)
+    _stage_local_workspace(scan_id, local.resolve())
+    register_workspace(scan_id)
+    return str(resolve_scan_path(scan_id))
 
 
 def _finalize_scan_result(result: dict) -> dict:
@@ -231,9 +207,8 @@ def _finalize_scan_result(result: dict) -> dict:
 
 
 def _execute_scan(repo_input: str, scan_id: str) -> None:
-    cloned_path: Path | None = None
     try:
-        scan_path, cloned_path = _resolve_scan_target(repo_input, scan_id=scan_id)
+        scan_path = _resolve_scan_target(repo_input, scan_id=scan_id)
         result = run_mesh_scan(
             scan_path,
             llm_config,
@@ -245,8 +220,6 @@ def _execute_scan(repo_input: str, scan_id: str) -> None:
         scan_status_store.fail(scan_id, str(exc.detail))
     except Exception as exc:
         scan_status_store.fail(scan_id, str(exc))
-    finally:
-        _cleanup_clone(cloned_path, scan_id)
 
 
 def _run_scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
@@ -261,8 +234,9 @@ def _run_scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
                 detail=f"Repository path does not exist: {body.repo_path}",
             )
 
+    scan_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
     if body.async_scan:
-        scan_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         scan_status_store.create(scan_id, body.repo_path)
         thread = threading.Thread(
             target=_execute_scan, args=(body.repo_path, scan_id), daemon=True
@@ -274,12 +248,12 @@ def _run_scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
             message="Scan started. Poll /scan/{scan_id}/status for live feed.",
         )
 
-    cloned_path: Path | None = None
     try:
-        scan_path, cloned_path = _resolve_scan_target(body.repo_path)
+        scan_path = _resolve_scan_target(body.repo_path, scan_id=scan_id)
         result = run_mesh_scan(
             scan_path,
             llm_config,
+            scan_id=scan_id,
             status_store=scan_status_store,
         )
         result = _finalize_scan_result(result)
@@ -291,8 +265,6 @@ def _run_scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    finally:
-        _cleanup_clone(cloned_path)
 
     return ScanResponse(**result)
 
@@ -470,8 +442,12 @@ def deploy_ship(
 ) -> dict:
     try:
         token = deploy_service.get_token(x_github_session)
-        return deploy_service.push_to_private_repo(
-            token, body.repo_name, body.local_path, description=body.description
+        result = deploy_service.push_to_private_repo(
+            token, body.repo_name, body.scan_id, description=body.description
         )
+        release_workspace(body.scan_id)
+        return result
+    except ScanWorkspaceGoneError as exc:
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     except GitHubDeployError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc

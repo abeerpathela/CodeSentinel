@@ -152,8 +152,8 @@ export function ScanProvider({ children }: { children: ReactNode }) {
     try {
       const name = `codesentinel-${scanResult.scan_id.toLowerCase()}`;
       const res = await api.shipToGithub(githubSession, {
+        scan_id: scanResult.scan_id,
         repo_name: name,
-        local_path: scanResult.repo_path,
       });
       setToast({ message: `Deployed to ${res.repo_url}`, variant: "success" });
     } catch (err) {

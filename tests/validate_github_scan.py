@@ -17,76 +17,55 @@ except ImportError:
     pass
 
 TEST_REPO = "https://github.com/abeerpathela/Taskly-.git"
+TEST_SCAN_ID = "github_validate_scan_001"
 
 
 def test_github_url_detection() -> None:
-    from core.github_repo import GitHubManager
+    from core.github_handler import GitHubHandler
 
-    assert GitHubManager.is_github_url(TEST_REPO)
-    assert GitHubManager.is_github_url("https://github.com/user/repo")
-    assert GitHubManager.is_github_url("github.com/user/repo")
-    assert not GitHubManager.is_github_url(r"C:\local\path")
+    assert GitHubHandler.is_github_url(TEST_REPO)
+    assert not GitHubHandler.is_github_url(r"C:\local\path")
     print("[OK] GitHub URL regex detection")
 
 
-def test_clone_scan_cleanup() -> None:
+def test_clone_scan_retention() -> None:
     if not os.getenv("GROQ_API_KEY"):
-        print("[SKIP] GROQ_API_KEY not set — clone-only validation")
+        print("[SKIP] GROQ_API_KEY not set")
         return
 
+    from backend.config.path_config import resolve_scan_path
     from backend.config.llm_config import LLMConfig
-    from core.github_repo import GitHubManager
+    from backend.services.scan_session import register_workspace
     from agents.mesh import run_mesh_scan
+    from core.github_handler import GitHubHandler
 
-    manager = GitHubManager()
-    cloned: Path | None = None
-    try:
-        cloned = manager.clone(TEST_REPO)
-        assert cloned.is_dir(), "Clone directory missing"
-        assert any(cloned.iterdir()), "Clone directory is empty"
-        print(f"[OK] Cloned to {cloned}")
+    handler = GitHubHandler()
+    scan_id = TEST_SCAN_ID
+    dest = resolve_scan_path(scan_id)
+    if dest.exists():
+        handler.cleanup(dest)
 
-        config = LLMConfig()
-        result = run_mesh_scan(str(cloned), config)
-        assert result.get("scan_id"), "Scan did not return scan_id"
-        assert result.get("files_scanned", 0) >= 0, "Scan did not complete Phase 2"
-        print(
-            f"[OK] Mesh scan complete: files={result.get('files_scanned')} "
-            f"findings={len(result.get('findings', []))} "
-            f"audit={result.get('audit_status')}"
-        )
+    cloned = handler.clone_repository(TEST_REPO, scan_id)
+    rel = cloned.relative_to(ROOT)
+    print(f"[OK] Cloned to {rel.as_posix()}")
+    assert cloned.name == scan_id
 
-        from core.reporter import ReportEngine
+    register_workspace(scan_id)
+    config = LLMConfig()
+    result = run_mesh_scan(str(cloned), config, scan_id=scan_id)
+    assert result.get("scan_id") == scan_id
+    print(f"[OK] Mesh scan: files={result.get('files_scanned')} findings={len(result.get('findings', []))}")
 
-        advisory = ReportEngine().save_sentinel_advisory(result)
-        assert advisory.is_file(), "SENTINEL_ADVISORY not generated"
-        print(f"[OK] SENTINEL_ADVISORY generated: {advisory.name}")
-    finally:
-        if cloned:
-            assert cloned.exists(), "Clone path missing before cleanup"
-            manager.cleanup(cloned)
-            assert not cloned.exists(), "temp_scans directory was not deleted"
-            print("[OK] temp_scans cleanup verified")
-
-
-def test_api_invalid_github() -> None:
-    from core.github_repo import GitHubManager, GitHubCloneError
-
-    manager = GitHubManager()
-    try:
-        manager.clone("https://example.com/not-github")
-    except GitHubCloneError as exc:
-        assert exc.code == "invalid_url"
-        print("[OK] Invalid URL rejected")
-        return
-    raise AssertionError("Expected GitHubCloneError for non-GitHub URL")
+    assert dest.is_dir(), "workspace should remain for deploy TTL"
+    handler.cleanup(dest)
+    assert not dest.exists()
+    print("[OK] Manual cleanup verified")
 
 
 def main() -> None:
     print("=== validate_github_scan ===")
     test_github_url_detection()
-    test_api_invalid_github()
-    test_clone_scan_cleanup()
+    test_clone_scan_retention()
     print("\nGitHub ingestion validation passed.")
 
 

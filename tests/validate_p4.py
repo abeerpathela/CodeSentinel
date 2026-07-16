@@ -79,7 +79,7 @@ def validate() -> None:
         print(f"[INFO] Summary before scan: {json.dumps(before)}")
 
         scan_resp = client.post(
-            "/codebreaker/scan",
+            "/scan/sync",
             json={"repo_path": str(repo), "async_scan": False},
         )
         if scan_resp.status_code != 200:
@@ -110,10 +110,10 @@ def validate() -> None:
             sys.exit(1)
         print("[OK] Analytics latest_scan_id matches scan")
 
-        if str(repo.resolve()) not in (summary_after.get("latest_repo_path") or ""):
-            print("[FAIL] Analytics latest_repo_path mismatch.", file=sys.stderr)
+        if summary_after.get("latest_repo_path") != scan_data["scan_id"]:
+            print("[FAIL] Analytics latest_repo_path should equal scan_id.", file=sys.stderr)
             sys.exit(1)
-        print("[OK] Analytics latest_repo_path matches")
+        print("[OK] Analytics latest_repo_path matches scan_id")
 
         if summary_after.get("total_sbom_risks", 0) < len(scan_data.get("sbom_risks", [])) and summary_after.get("total_scans", 0) <= 1:
             pass
@@ -126,8 +126,11 @@ def validate() -> None:
             print(f"[FAIL] Scan detail 404 for {scan_data['scan_id']}", file=sys.stderr)
             sys.exit(1)
         detail_data = detail.json()
-        if detail_data.get("repo_path") != str(repo.resolve()):
-            print("[FAIL] Scan detail repo_path mismatch.", file=sys.stderr)
+        if detail_data.get("scan_id") != scan_data["scan_id"]:
+            print("[FAIL] Scan detail scan_id mismatch.", file=sys.stderr)
+            sys.exit(1)
+        if "repo_path" in detail_data:
+            print("[FAIL] Persisted scan should not store repo_path.", file=sys.stderr)
             sys.exit(1)
         if len(detail_data.get("findings", [])) != len(scan_data.get("findings", [])):
             print("[FAIL] Scan detail findings count mismatch.", file=sys.stderr)

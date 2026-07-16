@@ -11,17 +11,22 @@ from typing import Any
 
 import requests
 
+from backend.config.path_config import resolve_scan_path
+
 GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_API = "https://api.github.com"
 
-# In-memory session store (use Redis in production)
 _oauth_states: dict[str, str] = {}
 _token_sessions: dict[str, str] = {}
 
 
 class GitHubDeployError(Exception):
     pass
+
+
+class ScanWorkspaceGoneError(GitHubDeployError):
+    """Raised when scan workspace no longer exists on disk."""
 
 
 class GitHubDeployService:
@@ -90,18 +95,26 @@ class GitHubDeployService:
             raise GitHubDeployError("Unauthorized — please login with GitHub first.")
         return _token_sessions[session_id]
 
+    @staticmethod
+    def resolve_deploy_path(scan_id: str) -> Path:
+        """Locate scan workspace by scan_id only."""
+        path = resolve_scan_path(scan_id)
+        if not path.exists() or not path.is_dir():
+            raise ScanWorkspaceGoneError(
+                f"Session directory [{scan_id}] no longer exists or was cleaned up."
+            )
+        return path
+
     def push_to_private_repo(
         self,
         token: str,
         repo_name: str,
-        local_path: str | Path,
+        scan_id: str,
         *,
         description: str = "CodeSentinel secured deployment",
     ) -> dict[str, Any]:
-        """Create a new private repo and push scanned files."""
-        root = Path(local_path).resolve()
-        if not root.is_dir():
-            raise GitHubDeployError(f"Local path not found: {local_path}")
+        """Create a new private repo and push scanned files from scan_id workspace."""
+        root = self.resolve_deploy_path(scan_id)
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -154,4 +167,4 @@ class GitHubDeployService:
         if push_result.returncode != 0:
             raise GitHubDeployError(f"Git push failed: {push_result.stderr[:200]}")
 
-        return {"repo_url": html_url, "clone_url": clone_url, "name": repo_name}
+        return {"repo_url": html_url, "clone_url": clone_url, "name": repo_name, "scan_id": scan_id}

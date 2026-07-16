@@ -126,7 +126,6 @@ def _save_scan_results(
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "scan_id": scan_id,
-        "repo_path": repo_path,
         "files_scanned": files_scanned,
         "findings": findings,
         "audit_status": audit_status,
@@ -226,7 +225,7 @@ def run_mesh_scan(
         prune_logs()
         result = {
             "scan_id": scan_id,
-            "repo_path": str(root),
+            "repo_path": scan_id,
             "files_scanned": 0,
             "findings": [],
             "scan_file": str(scan_file),
@@ -346,7 +345,7 @@ def run_mesh_scan(
 
     payload = {
         "scan_id": scan_id,
-        "repo_path": str(root),
+        "repo_path": scan_id,
         "files_scanned": len(files),
         "findings": findings,
         "scan_file": str(scan_file),

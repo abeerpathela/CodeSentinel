@@ -65,5 +65,5 @@ def compute_summary(project_root: Path | None = None) -> dict[str, Any]:
         "memory_corrections_stored": scans_with_corrections,
         "severity_breakdown": severity_counts,
         "latest_scan_id": latest.get("scan_id") if latest else None,
-        "latest_repo_path": latest.get("repo_path") if latest else None,
+        "latest_repo_path": latest.get("scan_id") if latest else None,
     }
