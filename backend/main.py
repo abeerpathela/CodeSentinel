@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from agents.mesh import run_mesh_scan
@@ -23,6 +24,7 @@ from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
+from core.reporter import ReportEngine
 
 app = FastAPI(
     title="CodeSentinel",
@@ -194,6 +196,58 @@ def analytics_summary() -> dict:
 @app.get("/analytics/resilience")
 def analytics_resilience() -> dict:
     return compute_resilience()
+
+
+@app.get("/analytics/export")
+def analytics_export(scan_id: str | None = None) -> PlainTextResponse:
+    """Generate and serve Security Audit Report executive summary (Markdown)."""
+    engine = ReportEngine()
+    scan_ids = [scan_id] if scan_id else None
+    markdown = engine.render_markdown(engine.aggregate(scan_ids))
+    engine.generate_and_save(scan_ids)
+    return PlainTextResponse(
+        content=markdown,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": 'attachment; filename="CodeSentinel_Security_Audit_Report.md"'
+        },
+    )
+
+
+FIXTURE_CATALOG = [
+    {
+        "id": "supply_chain",
+        "name": "Compromised Dependencies",
+        "category": "Supply Chain",
+        "description": "requirements.txt with malicious version hashes (requests, urllib3, pillow).",
+        "folder": "supply_chain",
+    },
+    {
+        "id": "logic_bomb",
+        "name": "Time-Delayed Logic Bomb",
+        "category": "Logic Bomb",
+        "description": "Obfuscated base64 payload executed after a maintenance window check.",
+        "folder": "logic_bomb",
+    },
+    {
+        "id": "complex_rce",
+        "name": "Hidden Env RCE Sink",
+        "category": "Advanced RCE",
+        "description": "Subprocess appears safe but uses untrusted PYTHON_BIN environment input.",
+        "folder": "complex_rce",
+    },
+]
+
+
+@app.get("/analytics/fixtures")
+def analytics_fixtures() -> list[dict]:
+    """Red-Team fixture catalog for Security Lab UI."""
+    root = Path(__file__).resolve().parents[1]
+    fixtures: list[dict] = []
+    for entry in FIXTURE_CATALOG:
+        path = root / "fixtures" / "exploits" / entry["folder"]
+        fixtures.append({**entry, "path": str(path.resolve())})
+    return fixtures
 
 
 @app.get("/analytics/scans")

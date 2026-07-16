@@ -238,27 +238,65 @@ def run_mesh_scan(
 
     _status("Codebreaker analyzing source code...", "codebreaker")
     graph = build_agent_mesh()
-    result = graph.invoke(
-        {
+    mesh_result: dict[str, Any]
+    try:
+        mesh_result = graph.invoke(
+            {
+                "scan_id": scan_id,
+                "repo_path": str(root),
+                "chunks": chunk_payloads,
+                "findings": [],
+                "initial_findings": [],
+                "llm_config": llm_config,
+                "trace_logger": trace_logger,
+                "vector_memory": vector_memory,
+                "memory_context": "",
+                "correction_prompt": None,
+                "audit_status": "pending",
+                "audit_feedback": "",
+                "audit_reasoning": "",
+                "retry_count": 0,
+                "seed_test_false_positive": seed_test_false_positive,
+                "memory_stored": False,
+                "self_correction_triggered": False,
+            }
+        )
+    except Exception as exc:
+        from agents.autopsy import audit_diagnostics
+        from core.static_scan import static_analyze
+
+        err = str(exc)
+        _status(f"Codebreaker unavailable ({err[:80]}) — static fallback engaged", "codebreaker")
+        trace_logger.log_event("codebreaker_fallback", {"error": err[:500]})
+        static_findings = static_analyze(root)
+        fallback_state: MeshState = {
             "scan_id": scan_id,
             "repo_path": str(root),
             "chunks": chunk_payloads,
-            "findings": [],
-            "initial_findings": [],
+            "findings": static_findings,
+            "initial_findings": list(static_findings),
             "llm_config": llm_config,
             "trace_logger": trace_logger,
             "vector_memory": vector_memory,
-            "memory_context": "",
-            "correction_prompt": None,
-            "audit_status": "pending",
-            "audit_feedback": "",
-            "audit_reasoning": "",
             "retry_count": 0,
             "seed_test_false_positive": seed_test_false_positive,
             "memory_stored": False,
             "self_correction_triggered": False,
         }
-    )
+        if static_findings:
+            mesh_result = audit_diagnostics(fallback_state)
+            mesh_result = _finalize_scan(mesh_result)
+        else:
+            mesh_result = _finalize_scan(
+                {
+                    **fallback_state,
+                    "audit_status": "approved",
+                    "audit_feedback": "",
+                    "audit_reasoning": "Static fallback — no code threats detected.",
+                }
+            )
+
+    result = mesh_result
 
     initial = result.get("initial_findings", [])
     for f in initial:

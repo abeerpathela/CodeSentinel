@@ -3,6 +3,7 @@ import type { Finding, SBOMRisk } from "../lib/api";
 interface Props {
   findings: Finding[];
   sbomRisks?: SBOMRisk[];
+  warRoom?: boolean;
 }
 
 const SEV_ORDER = ["Critical", "High", "Medium", "Low"] as const;
@@ -18,7 +19,7 @@ function normalizeSeverity(s: string): string {
   return SEV_ORDER.includes(cap as (typeof SEV_ORDER)[number]) ? cap : "Low";
 }
 
-export default function ThreatHeatmap({ findings, sbomRisks = [] }: Props) {
+export default function ThreatHeatmap({ findings, sbomRisks = [], warRoom = false }: Props) {
   const combined = [
     ...findings.map((f) => ({
       id: f.file_path + f.vulnerability_type,
@@ -44,8 +45,10 @@ export default function ThreatHeatmap({ findings, sbomRisks = [] }: Props) {
   }));
 
   return (
-    <div className="cyber-panel p-6">
-      <h2 className="mb-4 text-lg font-semibold tracking-wide">Threat Heatmap</h2>
+    <div className={`cyber-panel p-6 ${warRoom && combined.length > 0 ? "animate-pulse border-red-500/30 shadow-glow-red" : ""}`}>
+      <h2 className="mb-4 text-lg font-semibold tracking-wide">
+        Threat Heatmap {warRoom && combined.length > 0 && <span className="text-red-400">⚠ WAR-ROOM</span>}
+      </h2>
       {combined.length === 0 ? (
         <p className="text-sm text-cyber-muted">No threats detected. Run a scan to populate.</p>
       ) : (
