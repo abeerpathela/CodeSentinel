@@ -44,7 +44,7 @@ def main() -> None:
 
     client = TestClient(app)
     response = client.post(
-        "/scan",
+        "/scan/sync",
         json={"repo_path": TEST_REPO, "async_scan": False},
     )
 

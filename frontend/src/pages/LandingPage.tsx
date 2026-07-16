@@ -6,7 +6,7 @@ import { useScan } from "../contexts/ScanContext";
 import { staggerContainer, staggerItem } from "../lib/animations";
 
 export default function LandingPage() {
-  const { setPhase, threatLevel, resilience } = useScan();
+  const { setPhase, scanStatus, resilience } = useScan();
 
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 py-12">
@@ -47,7 +47,7 @@ export default function LandingPage() {
         </motion.div>
         <motion.div variants={staggerItem}>
           <div className="glass-panel p-2">
-            <SentinelOrb threatLevel={threatLevel} />
+            <SentinelOrb scanStatus={scanStatus} />
           </div>
         </motion.div>
       </motion.div>

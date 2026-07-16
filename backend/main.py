@@ -12,11 +12,12 @@ except ImportError:
     pass
 
 import threading
+import os
 from datetime import datetime, timezone
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agents.mesh import run_mesh_scan
@@ -24,11 +25,15 @@ from backend.analytics.metrics import compute_resilience
 from backend.analytics.summary import compute_summary, load_scan_records
 from backend.config.llm_config import LLMConfig, LLMProvider
 from backend.scan_status import scan_status_store
+from backend.services.github_deploy import GitHubDeployError, GitHubDeployService
+from backend.services.progress_stream import ProgressTracker
+from backend.services.scan_stream import iter_scan
 from core.github_handler import GitHubCloneError, GitHubHandler
 from core.reporter import ReportEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMP_SCANS_ROOT = PROJECT_ROOT / "backend" / "data" / "temp_scans"
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 
 app = FastAPI(
     title="CodeSentinel",
@@ -55,6 +60,7 @@ app.add_middleware(
 )
 
 llm_config = LLMConfig()
+deploy_service = GitHubDeployService()
 
 
 class PromptRequest(BaseModel):
@@ -108,6 +114,12 @@ class ScanStartResponse(BaseModel):
     scan_id: str
     status: str
     message: str
+
+
+class DeployRequest(BaseModel):
+    repo_name: str = Field(..., min_length=1)
+    local_path: str = Field(..., min_length=1)
+    description: str = "CodeSentinel secured deployment"
 
 
 @app.get("/health")
@@ -237,7 +249,7 @@ def _execute_scan(repo_input: str, scan_id: str) -> None:
         _cleanup_clone(cloned_path, scan_id)
 
 
-def _run_scan(body: ScanRequest) -> ScanResponse | ScanStartResponse:
+def _run_scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
     stripped = body.repo_path.strip()
     is_remote = GitHubHandler.is_github_url(stripped)
 
@@ -285,15 +297,55 @@ def _run_scan(body: ScanRequest) -> ScanResponse | ScanStartResponse:
     return ScanResponse(**result)
 
 
+@app.post("/scan")
+def scan_sse(body: ScanRequest) -> StreamingResponse:
+    """Live SSE stream — primary scan entry point for Phase 6 UX."""
+    stripped = body.repo_path.strip()
+    if not GitHubHandler.is_github_url(stripped):
+        local = Path(stripped)
+        if not local.is_dir():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository path does not exist: {body.repo_path}",
+            )
+
+    def event_generator():
+        for evt in iter_scan(stripped, llm_config):
+            if "ui_status" not in evt:
+                evt["ui_status"] = ProgressTracker().ui_scan_status(
+                    evt.get("stage", "PARSING"),
+                    evt.get("status", "active"),
+                    evt.get("result"),
+                )
+            yield ProgressTracker.sse_line(evt)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/scan/sync")
+def scan_sync(body: ScanRequest) -> ScanResponse | ScanStartResponse:
+    """Synchronous JSON scan (legacy / validation tests)."""
+    return _run_scan_sync(body)
+
+
 @app.post("/codebreaker/scan")
 def codebreaker_scan(body: ScanRequest, background_tasks: BackgroundTasks):
-    return _run_scan(body)
+    if body.async_scan:
+        return _run_scan_sync(body)
+    return scan_sse(body)
 
 
-@app.post("/scan")
-def scan(body: ScanRequest, background_tasks: BackgroundTasks):
-    """Alias for remote/local repository scanning."""
-    return _run_scan(body)
+@app.post("/scan/legacy")
+def scan_legacy(body: ScanRequest, background_tasks: BackgroundTasks):
+    return _run_scan_sync(body)
 
 
 @app.get("/scan/{scan_id}/status")
@@ -377,3 +429,49 @@ def analytics_scan_detail(scan_id: str) -> dict:
         if record.get("scan_id") == scan_id:
             return record
     raise HTTPException(status_code=404, detail=f"Scan {scan_id} not found")
+
+
+@app.get("/auth/login")
+def auth_login() -> RedirectResponse:
+    try:
+        state = deploy_service.create_login_state()
+        return RedirectResponse(deploy_service.authorize_url(state), status_code=302)
+    except GitHubDeployError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/auth/callback")
+def auth_callback(code: str, state: str) -> RedirectResponse:
+    try:
+        session_id = deploy_service.exchange_code(code, state)
+        return RedirectResponse(
+            f"{FRONTEND_URL}/?github_session={session_id}",
+            status_code=302,
+        )
+    except GitHubDeployError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.get("/auth/status")
+def auth_status(x_github_session: str | None = Header(default=None)) -> dict:
+    if not x_github_session:
+        return {"authenticated": False, "message": "Unauthorized — login required."}
+    try:
+        deploy_service.get_token(x_github_session)
+        return {"authenticated": True}
+    except GitHubDeployError:
+        return {"authenticated": False, "message": "Unauthorized — invalid session."}
+
+
+@app.post("/deploy/ship")
+def deploy_ship(
+    body: DeployRequest,
+    x_github_session: str | None = Header(default=None),
+) -> dict:
+    try:
+        token = deploy_service.get_token(x_github_session)
+        return deploy_service.push_to_private_repo(
+            token, body.repo_name, body.local_path, description=body.description
+        )
+    except GitHubDeployError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc

@@ -44,7 +44,7 @@ export default function SplashScreen({ onComplete }: Props) {
         className="relative z-10 w-full max-w-lg px-8 text-center"
       >
         <div className="mx-auto mb-8 h-40 w-40">
-          <SentinelOrb threatLevel="scanning" compact className="h-full" />
+          <SentinelOrb scanStatus="scanning" compact className="h-full" />
         </div>
         <p className="font-mono text-xs uppercase tracking-[0.4em] text-cyber-accent">CodeSentinel</p>
         <h1 className="mt-2 text-2xl font-bold text-cyber-text">Sentinel Command Center</h1>

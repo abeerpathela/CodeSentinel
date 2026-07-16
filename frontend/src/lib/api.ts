@@ -28,13 +28,19 @@ export interface ScanResult {
   audit_status?: string;
   retry_count?: number;
   self_correction_triggered?: boolean;
+  advisory_file?: string;
 }
 
-export interface ScanStatus {
+export interface SSEProgressEvent {
   scan_id: string;
-  status: string;
-  feed: { timestamp: string; message: string; stage: string }[];
-  result: ScanResult | null;
+  stage: string;
+  message: string;
+  status: "active" | "done" | "error";
+  timestamp: string;
+  ui_status?: "idle" | "scanning" | "verifying" | "breach" | "secure";
+  reasoning?: string;
+  outcome?: "secure" | "breach";
+  result?: ScanResult;
 }
 
 export interface AnalyticsSummary {
@@ -74,7 +80,7 @@ export interface RedTeamFixture {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...init?.headers },
     ...init,
   });
   if (!res.ok) {
@@ -84,7 +90,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-/** Parse FastAPI error JSON into a human-readable message. */
 export function parseScanError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
   try {
@@ -96,50 +101,79 @@ export function parseScanError(err: unknown): string {
   return err.message;
 }
 
-async function requestText(path: string): Promise<string> {
-  const res = await fetch(`${API_BASE}${path}`);
+function parseSSEChunk(buffer: string): { events: SSEProgressEvent[]; rest: string } {
+  const events: SSEProgressEvent[] = [];
+  const parts = buffer.split("\n\n");
+  const rest = parts.pop() || "";
+  for (const part of parts) {
+    const line = part.trim();
+    if (line.startsWith("data: ")) {
+      try {
+        events.push(JSON.parse(line.slice(6)) as SSEProgressEvent);
+      } catch {
+        /* skip malformed */
+      }
+    }
+  }
+  return { events, rest };
+}
+
+export async function streamScan(
+  repo_path: string,
+  onEvent: (evt: SSEProgressEvent) => void
+): Promise<SSEProgressEvent | null> {
+  const res = await fetch(`${API_BASE}/scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ repo_path }),
+  });
   if (!res.ok) throw new Error(await res.text());
-  return res.text();
+  if (!res.body) throw new Error("No SSE stream body");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let last: SSEProgressEvent | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parsed = parseSSEChunk(buffer);
+    buffer = parsed.rest;
+    for (const evt of parsed.events) {
+      last = evt;
+      onEvent(evt);
+    }
+  }
+  return last;
 }
 
 export const api = {
-  startScan: (repo_path: string) =>
-    request<{ scan_id: string; status: string; message: string }>(
-      "/codebreaker/scan",
-      { method: "POST", body: JSON.stringify({ repo_path, async_scan: true }) }
-    ),
-  scanStatus: (scan_id: string) =>
-    request<ScanStatus>(`/scan/${scan_id}/status`),
+  streamScan,
+  startScanSync: (repo_path: string) =>
+    request<ScanResult>("/scan/sync", {
+      method: "POST",
+      body: JSON.stringify({ repo_path, async_scan: false }),
+    }),
   summary: () => request<AnalyticsSummary>("/analytics/summary"),
   resilience: () => request<ResilienceMetrics>("/analytics/resilience"),
   scans: () => request<ScanRecord[]>("/analytics/scans"),
   fixtures: () => request<RedTeamFixture[]>("/analytics/fixtures"),
-  exportReport: (scanId?: string) =>
-    requestText(scanId ? `/analytics/export?scan_id=${scanId}` : "/analytics/export"),
+  authStatus: (session: string | null) =>
+    request<{ authenticated: boolean; message?: string }>("/auth/status", {
+      headers: session ? { "X-Github-Session": session } : {},
+    }),
+  shipToGithub: (
+    session: string,
+    payload: { repo_name: string; local_path: string; description?: string }
+  ) =>
+    request<{ repo_url: string }>("/deploy/ship", {
+      method: "POST",
+      headers: { "X-Github-Session": session, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
   health: () => request<{ status: string }>("/health"),
 };
-
-export function pollScan(
-  scan_id: string,
-  onUpdate: (status: ScanStatus) => void,
-  intervalMs = 1000
-): () => void {
-  let active = true;
-  const tick = async () => {
-    if (!active) return;
-    try {
-      const status = await api.scanStatus(scan_id);
-      onUpdate(status);
-      if (status.status === "complete" || status.status === "error") return;
-    } catch {
-      /* retry next tick */
-    }
-    if (active) setTimeout(tick, intervalMs);
-  };
-  tick();
-  return () => {
-    active = false;
-  };
-}
 
 export { API_BASE };

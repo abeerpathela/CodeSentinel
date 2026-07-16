@@ -24,13 +24,13 @@ const NAV = [
 ];
 
 export default function MainShell() {
-  const { activePage, setActivePage, setPhase, threatLevel, summary, resilience } = useScan();
+  const { activePage, setActivePage, setPhase, scanStatus, summary, resilience } = useScan();
 
   return (
     <div className="flex min-h-screen">
       <aside className="glass-sidebar fixed inset-y-0 left-0 z-30 flex w-64 flex-col border-r border-white/5 p-4 md:relative">
         <div className="mb-8 flex items-center gap-3 px-2">
-          <MiniOrbCanvas threatLevel={threatLevel} />
+          <MiniOrbCanvas scanStatus={scanStatus} />
           <div>
             <p className="font-mono text-[10px] uppercase tracking-widest text-cyber-accent">CodeSentinel</p>
             <p className="text-sm font-bold">Command Center</p>

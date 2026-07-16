@@ -2,14 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import {
   api,
   parseScanError,
-  pollScan,
+  streamScan,
   type AnalyticsSummary,
   type ResilienceMetrics,
   type ScanResult,
-  type ScanStatus,
+  type SSEProgressEvent,
 } from "../lib/api";
+import type { ScanStatusMode } from "../components/SentinelOrb";
 
-export type ThreatLevel = "idle" | "cloning" | "scanning" | "threat";
 export type AppPhase = "splash" | "landing" | "command";
 
 export interface ToastState {
@@ -25,51 +25,25 @@ interface ScanContextValue {
   repoPath: string;
   setRepoPath: (p: string) => void;
   scanning: boolean;
-  cloning: boolean;
   scanResult: ScanResult | null;
-  feed: ScanStatus["feed"];
-  feedStatus: string;
+  sseEvents: SSEProgressEvent[];
+  currentStage: string;
+  scanStatus: ScanStatusMode;
+  showResults: boolean;
+  outcome: "secure" | "breach" | null;
+  reasoning: string[];
   summary: AnalyticsSummary | null;
   resilience: ResilienceMetrics | null;
-  threatLevel: ThreatLevel;
   toast: ToastState | null;
   setToast: (t: ToastState | null) => void;
+  githubSession: string | null;
   handleScan: (path?: string) => Promise<void>;
+  shipToGithub: () => Promise<void>;
+  shipping: boolean;
   refreshMetrics: () => Promise<void>;
 }
 
 const ScanContext = createContext<ScanContextValue | null>(null);
-
-function computeThreatLevel(
-  scanning: boolean,
-  feedStatus: string,
-  feed: ScanStatus["feed"],
-  scanResult: ScanResult | null
-): ThreatLevel {
-  if (feedStatus === "cloning" || feed.some((f) => f.stage === "cloning")) return "cloning";
-  if (scanning || ["scanning", "sbom", "codebreaker", "autopsy", "queued"].includes(feedStatus)) {
-    return "scanning";
-  }
-  if (scanResult) {
-    const threats =
-      (scanResult.findings?.length || 0) + (scanResult.sbom_risks?.length || 0);
-    if (threats > 0) return "threat";
-  }
-  return "idle";
-}
-
-function githubErrorMessage(raw: string): string {
-  const lower = raw.toLowerCase();
-  if (lower.includes("not found")) return "GitHub repo not found — check the URL.";
-  if (lower.includes("private") || lower.includes("authentication")) {
-    return "Cannot clone — repository is private or requires authentication.";
-  }
-  if (lower.includes("invalid") && lower.includes("github")) {
-    return "Invalid GitHub URL format.";
-  }
-  if (lower.includes("git is not installed")) return "Server error: Git is not installed.";
-  return raw;
-}
 
 export function ScanProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<AppPhase>("splash");
@@ -77,14 +51,20 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   const [repoPath, setRepoPath] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [feed, setFeed] = useState<ScanStatus["feed"]>([]);
-  const [feedStatus, setFeedStatus] = useState("idle");
+  const [sseEvents, setSseEvents] = useState<SSEProgressEvent[]>([]);
+  const [currentStage, setCurrentStage] = useState("IDLE");
+  const [scanStatus, setScanStatus] = useState<ScanStatusMode>("idle");
+  const [showResults, setShowResults] = useState(false);
+  const [outcome, setOutcome] = useState<"secure" | "breach" | null>(null);
+  const [reasoning, setReasoning] = useState<string[]>([]);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [resilience, setResilience] = useState<ResilienceMetrics | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
-  const prevFeedLen = useRef(0);
-
-  const cloning = feedStatus === "cloning" || feed.some((f) => f.stage === "cloning");
+  const [githubSession, setGithubSession] = useState<string | null>(
+    () => localStorage.getItem("github_session")
+  );
+  const [shipping, setShipping] = useState(false);
+  const prevReasoning = useRef(0);
 
   const refreshMetrics = useCallback(async () => {
     try {
@@ -103,19 +83,21 @@ export function ScanProvider({ children }: { children: ReactNode }) {
   }, [refreshMetrics]);
 
   useEffect(() => {
-    const rejected = feed.some(
-      (f) =>
-        f.message.toLowerCase().includes("corrected") ||
-        f.message.toLowerCase().includes("false positive")
-    );
-    if (feed.length > prevFeedLen.current && rejected) {
-      setToast({
-        message: "Autopsy rejected false positive — self-correction engaged",
-        variant: "warning",
-      });
+    const params = new URLSearchParams(window.location.search);
+    const session = params.get("github_session");
+    if (session) {
+      localStorage.setItem("github_session", session);
+      setGithubSession(session);
+      window.history.replaceState({}, "", window.location.pathname);
     }
-    prevFeedLen.current = feed.length;
-  }, [feed]);
+  }, []);
+
+  useEffect(() => {
+    if (reasoning.length > prevReasoning.current) {
+      setToast({ message: "Autopsy decision logic updated", variant: "info" });
+    }
+    prevReasoning.current = reasoning.length;
+  }, [reasoning]);
 
   const handleScan = useCallback(
     async (path?: string) => {
@@ -124,49 +106,62 @@ export function ScanProvider({ children }: { children: ReactNode }) {
       setRepoPath(target);
       setScanning(true);
       setScanResult(null);
-      setFeed([]);
-      setFeedStatus("queued");
-      prevFeedLen.current = 0;
+      setSseEvents([]);
+      setCurrentStage("CLONING");
+      setScanStatus("scanning");
+      setShowResults(false);
+      setOutcome(null);
+      setReasoning([]);
       setActivePage("war-room");
 
-      const isRemote = target.toLowerCase().startsWith("http");
-      if (isRemote) {
-        setFeedStatus("cloning");
-      }
-
       try {
-        const { scan_id } = await api.startScan(target);
-        const stop = pollScan(scan_id, (status) => {
-          setFeed(status.feed);
-          setFeedStatus(status.status);
-          if (status.status === "complete" && status.result) {
-            setScanResult(status.result);
+        await streamScan(target, (evt) => {
+          setSseEvents((prev) => [...prev, evt]);
+          setCurrentStage(evt.stage);
+          if (evt.ui_status) setScanStatus(evt.ui_status);
+          if (evt.reasoning) setReasoning((r) => [...r, evt.reasoning!]);
+          if (evt.status === "error") {
             setScanning(false);
-            refreshMetrics();
-            if (status.result.self_correction_triggered) {
-              setToast({ message: "Verification complete — threat profile refined", variant: "success" });
-            }
+            setScanStatus("breach");
+            setToast({ message: evt.message, variant: "warning" });
           }
-          if (status.status === "error") {
+          if (evt.stage === "COMPLETE" && evt.status === "done" && evt.result) {
+            setScanResult(evt.result);
             setScanning(false);
-            const last = status.feed[status.feed.length - 1];
-            const errMsg = last?.message || "Scan failed";
-            setToast({ message: githubErrorMessage(errMsg.replace(/^Error:\s*/i, "")), variant: "warning" });
+            setShowResults(true);
+            setOutcome((evt.outcome as "secure" | "breach") || "breach");
+            setScanStatus((evt.outcome as ScanStatusMode) || "breach");
+            refreshMetrics();
           }
         });
-        setTimeout(() => stop(), 300000);
       } catch (err) {
-        const msg = githubErrorMessage(parseScanError(err));
-        setFeed([{ timestamp: new Date().toISOString(), message: msg, stage: "error" }]);
-        setFeedStatus("error");
+        setToast({ message: parseScanError(err), variant: "warning" });
         setScanning(false);
-        setToast({ message: msg, variant: "warning" });
+        setScanStatus("breach");
       }
     },
     [repoPath, refreshMetrics]
   );
 
-  const threatLevel = computeThreatLevel(scanning, feedStatus, feed, scanResult);
+  const shipToGithub = useCallback(async () => {
+    if (!githubSession || !scanResult) {
+      setToast({ message: "Unauthorized — login with GitHub first.", variant: "warning" });
+      return;
+    }
+    setShipping(true);
+    try {
+      const name = `codesentinel-${scanResult.scan_id.toLowerCase()}`;
+      const res = await api.shipToGithub(githubSession, {
+        repo_name: name,
+        local_path: scanResult.repo_path,
+      });
+      setToast({ message: `Deployed to ${res.repo_url}`, variant: "success" });
+    } catch (err) {
+      setToast({ message: parseScanError(err), variant: "warning" });
+    } finally {
+      setShipping(false);
+    }
+  }, [githubSession, scanResult]);
 
   return (
     <ScanContext.Provider
@@ -178,16 +173,21 @@ export function ScanProvider({ children }: { children: ReactNode }) {
         repoPath,
         setRepoPath,
         scanning,
-        cloning,
         scanResult,
-        feed,
-        feedStatus,
+        sseEvents,
+        currentStage,
+        scanStatus,
+        showResults,
+        outcome,
+        reasoning,
         summary,
         resilience,
-        threatLevel,
         toast,
         setToast,
+        githubSession,
         handleScan,
+        shipToGithub,
+        shipping,
         refreshMetrics,
       }}
     >

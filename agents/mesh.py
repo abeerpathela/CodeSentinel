@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from langgraph.graph import END, StateGraph
 from typing_extensions import TypedDict
@@ -163,6 +163,7 @@ def run_mesh_scan(
     seed_test_false_positive: bool = False,
     scan_id: str | None = None,
     status_store: Any | None = None,
+    on_progress: Callable[[str, str, str], None] | None = None,
 ) -> dict[str, Any]:
     """Execute full agent mesh scan with Autopsy guardrails and SBOM analysis."""
     from core.log_cleanup import prune_logs
@@ -182,10 +183,15 @@ def run_mesh_scan(
         if status_store:
             status_store.push(scan_id, msg, stage=stage)
 
+    def _progress(sse_stage: str, msg: str, status: str = "active") -> None:
+        _status(msg, sse_stage.lower())
+        if on_progress:
+            on_progress(sse_stage, msg, status)
+
     if status_store:
         status_store.create(scan_id, str(root))
 
-    _status("Scanning repository files...", "scanning")
+    _progress("PARSING", "Filesystem parsing: discovering source files...")
     reader = RepositoryReader(root)
     files = reader.discover_files()
     chunks = reader.chunk_for_llm()
@@ -193,12 +199,14 @@ def run_mesh_scan(
         {"file_paths": c.file_paths, "content": c.content, "byte_size": c.byte_size}
         for c in chunks
     ]
+    _progress("PARSING", f"Filesystem parsing complete — {len(files)} file(s).", "done")
 
-    _status("Analyzing SBOM and dependency chain...", "sbom")
+    _progress("SBOM", "SBOM Build: analyzing dependency manifests...")
     sbom = SBOMParser(root).analyze(llm_config)
     sbom_risks = [_dependency_to_dict(d) for d in sbom.transitive_risks + [d for d in sbom.dependencies if d.vulnerable]]
     if sbom_risks:
-        _status(f"Found {len(sbom_risks)} supply-chain risk(s) in SBOM.", "sbom")
+        _progress("SBOM", f"Found {len(sbom_risks)} supply-chain risk(s) in SBOM.")
+    _progress("SBOM", f"SBOM Build complete — {len(sbom.dependencies)} direct dep(s).", "done")
 
     if not chunk_payloads:
         trace_logger.save()
@@ -236,7 +244,7 @@ def run_mesh_scan(
             status_store.complete(scan_id, result)
         return result
 
-    _status("Codebreaker analyzing source code...", "codebreaker")
+    _progress("CODEBREAKER", "Codebreaker (Gemini): analyzing source chunks...")
     graph = build_agent_mesh()
     mesh_result: dict[str, Any]
     try:
@@ -266,7 +274,7 @@ def run_mesh_scan(
         from core.static_scan import static_analyze
 
         err = str(exc)
-        _status(f"Codebreaker unavailable ({err[:80]}) — static fallback engaged", "codebreaker")
+        _progress("CODEBREAKER", f"Codebreaker unavailable ({err[:80]}) — static fallback engaged")
         trace_logger.log_event("codebreaker_fallback", {"error": err[:500]})
         static_findings = static_analyze(root)
         fallback_state: MeshState = {
@@ -305,9 +313,19 @@ def run_mesh_scan(
             break
 
     if result.get("retry_count", 0) > 0 or result.get("self_correction_triggered"):
-        _status("Autopsy auditing findings...", "autopsy")
+        _progress("AUTOPSY", "Autopsy (Groq): auditing decision logic...")
         if result.get("self_correction_triggered"):
-            _status("Corrected: False Positive removed", "autopsy")
+            _progress("AUTOPSY", "Autopsy rejected false positive — self-correction applied.")
+    _progress(
+        "CODEBREAKER",
+        f"Codebreaker complete — {len(result.get('findings', []))} finding(s).",
+        "done",
+    )
+    _progress(
+        "AUTOPSY",
+        f"Autopsy audit complete — status: {result.get('audit_status', 'approved')}.",
+        "done",
+    )
 
     findings = result.get("findings", [])
     scan_file = _save_scan_results(
